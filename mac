@@ -1,0 +1,460 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# One-shot macOS developer setup.
+#
+# Local usage:
+#   ./mac
+#
+# Hosted usage:
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
+#
+# Useful overrides:
+#   GIT_USER_NAME="Your Name" GIT_USER_EMAIL="you@example.com" ./mac
+#   INSTALL_GUI_APPS=1 ./mac
+#   INSTALL_ANDROID=1 ./mac
+#   INSTALL_DOCKER=1 ./mac
+#   INSTALL_DEV_SERVICES=1 ./mac
+#   GENERATE_SSH_KEY=1 GIT_USER_EMAIL="you@example.com" ./mac
+
+INSTALL_GUI_APPS="${INSTALL_GUI_APPS:-0}"
+INSTALL_ANDROID="${INSTALL_ANDROID:-0}"
+INSTALL_LANGUAGES="${INSTALL_LANGUAGES:-1}"
+INSTALL_DOCKER="${INSTALL_DOCKER:-0}"
+INSTALL_DEV_SERVICES="${INSTALL_DEV_SERVICES:-0}"
+GENERATE_SSH_KEY="${GENERATE_SSH_KEY:-0}"
+APPLY_MACOS_DEFAULTS="${APPLY_MACOS_DEFAULTS:-0}"
+SKIP_SHELL_SETUP="${SKIP_SHELL_SETUP:-0}"
+ASK_FOR_SUDO="${ASK_FOR_SUDO:-1}"
+
+BREW_FORMULAE=(
+  git
+  git-lfs
+  gh
+  curl
+  wget
+  jq
+  yq
+  ripgrep
+  fd
+  fzf
+  bat
+  eza
+  tree
+  zoxide
+  starship
+  mise
+  direnv
+  tmux
+  htop
+  gnupg
+  pinentry-mac
+  coreutils
+  shellcheck
+  shfmt
+)
+
+LANGUAGE_FORMULAE=(
+  node
+  pkg-config
+  openssl@3
+  readline
+  sqlite
+  xz
+  zlib
+)
+
+GUI_CASKS=(
+  visual-studio-code
+  iterm2
+  rectangle
+  google-chrome
+)
+
+DEV_SERVICE_FORMULAE=(
+  postgresql@16
+  redis
+)
+
+ANDROID_FORMULAE=(
+  android-platform-tools
+  gradle
+  kotlin
+  watchman
+)
+
+ANDROID_CASKS=(
+  android-studio
+  android-commandlinetools
+  temurin
+)
+
+log() {
+  printf '\033[1;34m==>\033[0m %s\n' "$*"
+}
+
+warn() {
+  printf '\033[1;33mWarning:\033[0m %s\n' "$*" >&2
+}
+
+die() {
+  printf '\033[1;31mError:\033[0m %s\n' "$*" >&2
+  exit 1
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+is_enabled() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+ensure_macos() {
+  [[ "$(uname -s)" == "Darwin" ]] || die "This script is intended for macOS."
+}
+
+keep_sudo_alive() {
+  is_enabled "$ASK_FOR_SUDO" || return 0
+
+  log "Requesting sudo once so setup can install system components"
+  sudo -v
+
+  while true; do
+    sudo -n true
+    sleep 60
+    kill -0 "$$" >/dev/null 2>&1 || exit
+  done 2>/dev/null &
+
+  SUDO_KEEPALIVE_PID="$!"
+  trap 'kill "${SUDO_KEEPALIVE_PID:-}" >/dev/null 2>&1 || true' EXIT
+}
+
+install_command_line_tools() {
+  if xcode-select -p >/dev/null 2>&1; then
+    log "Xcode Command Line Tools already installed"
+    return 0
+  fi
+
+  log "Installing Xcode Command Line Tools"
+  xcode-select --install >/dev/null 2>&1 || true
+
+  printf '\nComplete the Command Line Tools installer window, then press Return here. '
+  read -r _
+
+  until xcode-select -p >/dev/null 2>&1; do
+    printf 'Command Line Tools are not detected yet. Press Return after the installer finishes, or Ctrl-C to stop. '
+    read -r _
+  done
+}
+
+load_brew_shellenv() {
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  elif have brew; then
+    eval "$(brew shellenv)"
+  fi
+}
+
+install_homebrew() {
+  load_brew_shellenv
+
+  if have brew; then
+    log "Homebrew already installed at $(command -v brew)"
+  else
+    log "Installing Homebrew"
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    load_brew_shellenv
+  fi
+
+  have brew || die "Homebrew install finished, but brew is not on PATH."
+
+  brew analytics off >/dev/null 2>&1 || true
+  log "Updating Homebrew"
+  brew update
+}
+
+brew_install_formulae() {
+  local formula
+
+  for formula in "$@"; do
+    if brew list --formula "$formula" >/dev/null 2>&1; then
+      log "Formula already installed: $formula"
+    else
+      log "Installing formula: $formula"
+      brew install "$formula"
+    fi
+  done
+}
+
+brew_install_casks() {
+  local cask
+
+  for cask in "$@"; do
+    if brew list --cask "$cask" >/dev/null 2>&1; then
+      log "Cask already installed: $cask"
+    else
+      log "Installing cask: $cask"
+      brew install --cask "$cask"
+    fi
+  done
+}
+
+configure_git() {
+  have git || return 0
+
+  log "Configuring Git defaults"
+  git config --global init.defaultBranch main
+  git config --global core.autocrlf input
+  git config --global push.autoSetupRemote true
+  git config --global fetch.prune true
+
+  if [[ -n "${GIT_USER_NAME:-}" ]]; then
+    git config --global user.name "$GIT_USER_NAME"
+  fi
+
+  if [[ -n "${GIT_USER_EMAIL:-}" ]]; then
+    git config --global user.email "$GIT_USER_EMAIL"
+  fi
+
+  if have code; then
+    git config --global core.editor "code --wait"
+  fi
+
+  if have git-lfs; then
+    git lfs install --skip-repo
+  fi
+}
+
+configure_language_tools() {
+  is_enabled "$INSTALL_LANGUAGES" || return 0
+  have mise || return 0
+
+  log "Installing global language runtimes with mise"
+  mise use --global node@lts || warn "Could not install Node.js via mise."
+  mise use --global python@latest || warn "Could not install Python via mise."
+
+  eval "$(mise activate bash)" || true
+
+  if have node && have corepack; then
+    log "Enabling Corepack for package managers like pnpm and yarn"
+    corepack enable || warn "Could not enable Corepack."
+    corepack prepare pnpm@latest --activate || warn "Could not activate pnpm with Corepack."
+    corepack prepare yarn@stable --activate || warn "Could not activate Yarn with Corepack."
+  fi
+}
+
+configure_ssh_key() {
+  is_enabled "$GENERATE_SSH_KEY" || return 0
+
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+
+  if [[ -f "$HOME/.ssh/id_ed25519" ]]; then
+    log "SSH key already exists: $HOME/.ssh/id_ed25519"
+    return 0
+  fi
+
+  local ssh_comment
+  ssh_comment="${GIT_USER_EMAIL:-$USER@$(hostname)}"
+
+  log "Generating SSH key: $HOME/.ssh/id_ed25519"
+  ssh-keygen -t ed25519 -C "$ssh_comment" -f "$HOME/.ssh/id_ed25519" -N ""
+
+  if ssh-add --help 2>&1 | grep -q -- '--apple-use-keychain'; then
+    ssh-add --apple-use-keychain "$HOME/.ssh/id_ed25519" || true
+  else
+    ssh-add "$HOME/.ssh/id_ed25519" || true
+  fi
+}
+
+replace_managed_block() {
+  local file="$1"
+  local start_marker="$2"
+  local end_marker="$3"
+  local block="$4"
+  local tmp_file
+
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  tmp_file="$(mktemp)"
+
+  awk -v start="$start_marker" -v end="$end_marker" '
+    $0 == start { skipping = 1; next }
+    $0 == end { skipping = 0; next }
+    skipping != 1 { print }
+  ' "$file" > "$tmp_file"
+
+  {
+    printf '%s\n' "$block"
+    printf '\n'
+    cat "$tmp_file"
+  } > "$file"
+
+  rm -f "$tmp_file"
+}
+
+setup_shell() {
+  is_enabled "$SKIP_SHELL_SETUP" && return 0
+
+  local zshrc
+  local start_marker
+  local end_marker
+  local block
+
+  zshrc="${ZDOTDIR:-$HOME}/.zshrc"
+  start_marker="# >>> mac-dev-setup >>>"
+  end_marker="# <<< mac-dev-setup <<<"
+
+  block="$(cat <<'EOF'
+# >>> mac-dev-setup >>>
+if [[ -x /opt/homebrew/bin/brew ]]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [[ -x /usr/local/bin/brew ]]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+fi
+
+typeset -U path PATH
+
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise activate zsh)"
+fi
+
+if command -v direnv >/dev/null 2>&1; then
+  eval "$(direnv hook zsh)"
+fi
+
+if command -v zoxide >/dev/null 2>&1; then
+  eval "$(zoxide init zsh)"
+fi
+
+if command -v starship >/dev/null 2>&1; then
+  eval "$(starship init zsh)"
+fi
+
+if [[ -d "$HOME/Library/Android/sdk" ]]; then
+  export ANDROID_HOME="$HOME/Library/Android/sdk"
+  export ANDROID_SDK_ROOT="$ANDROID_HOME"
+
+  if [[ -d "$ANDROID_HOME/platform-tools" ]]; then
+    path=("$ANDROID_HOME/platform-tools" $path)
+  fi
+
+  if [[ -d "$ANDROID_HOME/emulator" ]]; then
+    path=("$ANDROID_HOME/emulator" $path)
+  fi
+
+  if [[ -d "$ANDROID_HOME/cmdline-tools/latest/bin" ]]; then
+    path=("$ANDROID_HOME/cmdline-tools/latest/bin" $path)
+  fi
+fi
+
+if [[ -x /usr/libexec/java_home ]]; then
+  java_home_path="$(/usr/libexec/java_home 2>/dev/null || true)"
+  if [[ -n "$java_home_path" ]]; then
+    export JAVA_HOME="$java_home_path"
+  fi
+  unset java_home_path
+fi
+# <<< mac-dev-setup <<<
+EOF
+)"
+
+  log "Updating shell setup in $zshrc"
+  replace_managed_block "$zshrc" "$start_marker" "$end_marker" "$block"
+
+  if have fzf; then
+    "$(brew --prefix)/opt/fzf/install" --all --no-bash --no-fish >/dev/null || true
+  fi
+}
+
+apply_macos_defaults() {
+  is_enabled "$APPLY_MACOS_DEFAULTS" || return 0
+
+  log "Applying optional macOS defaults"
+  defaults write NSGlobalDomain AppleShowAllExtensions -bool true
+  defaults write NSGlobalDomain InitialKeyRepeat -int 15
+  defaults write NSGlobalDomain KeyRepeat -int 2
+  defaults write com.apple.finder ShowPathbar -bool true
+  defaults write com.apple.finder ShowStatusBar -bool true
+  defaults write com.apple.dock autohide -bool true
+
+  killall Finder >/dev/null 2>&1 || true
+  killall Dock >/dev/null 2>&1 || true
+}
+
+print_next_steps() {
+  local android_next_step
+
+  android_next_step=""
+  if is_enabled "$INSTALL_ANDROID"; then
+    android_next_step="  - Open Android Studio once to finish SDK setup and accept Android licenses."
+  fi
+
+  cat <<EOF
+
+Done.
+
+Next steps:
+  - Restart your terminal or run: source "\${ZDOTDIR:-\$HOME}/.zshrc"
+  - If you use GitHub, authenticate with: gh auth login
+${android_next_step}
+  - If you generated an SSH key, add this public key to GitHub/GitLab:
+     $HOME/.ssh/id_ed25519.pub
+
+Common reruns:
+  INSTALL_GUI_APPS=1 ./mac
+  INSTALL_ANDROID=1 ./mac
+  INSTALL_DOCKER=1 ./mac
+  INSTALL_DEV_SERVICES=1 ./mac
+  APPLY_MACOS_DEFAULTS=1 ./mac
+
+EOF
+}
+
+main() {
+  ensure_macos
+  keep_sudo_alive
+  install_command_line_tools
+  install_homebrew
+
+  brew_install_formulae "${BREW_FORMULAE[@]}"
+
+  if is_enabled "$INSTALL_LANGUAGES"; then
+    brew_install_formulae "${LANGUAGE_FORMULAE[@]}"
+  fi
+
+  if is_enabled "$INSTALL_DEV_SERVICES"; then
+    brew_install_formulae "${DEV_SERVICE_FORMULAE[@]}"
+  fi
+
+  if is_enabled "$INSTALL_ANDROID"; then
+    brew_install_formulae "${ANDROID_FORMULAE[@]}"
+    brew_install_casks "${ANDROID_CASKS[@]}"
+  fi
+
+  if is_enabled "$INSTALL_GUI_APPS"; then
+    brew_install_casks "${GUI_CASKS[@]}"
+  fi
+
+  if is_enabled "$INSTALL_DOCKER"; then
+    brew_install_casks docker
+  fi
+
+  configure_git
+  configure_language_tools
+  configure_ssh_key
+  setup_shell
+  apply_macos_defaults
+
+  brew cleanup || true
+  print_next_steps
+}
+
+main "$@"

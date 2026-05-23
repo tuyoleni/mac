@@ -10,15 +10,16 @@ IFS=$'\n\t'
 # Hosted usage:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- full
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- webstorm android orbstack
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- webstorm postman android orbstack
 #
 # Useful overrides:
-#   ./mac webstorm android orbstack
+#   ./mac webstorm postman android orbstack
 #   ./mac full
 #   GIT_USER_NAME="Your Name" GIT_USER_EMAIL="you@example.com" ./mac
 #   GENERATE_SSH_KEY=1 GIT_USER_EMAIL="you@example.com" ./mac
 
 INSTALL_WEBSTORM="${INSTALL_WEBSTORM:-0}"
+INSTALL_POSTMAN="${INSTALL_POSTMAN:-0}"
 INSTALL_ANDROID="${INSTALL_ANDROID:-0}"
 INSTALL_LANGUAGES="${INSTALL_LANGUAGES:-1}"
 INSTALL_ORBSTACK="${INSTALL_ORBSTACK:-0}"
@@ -62,6 +63,10 @@ WEBSTORM_CASKS=(
   webstorm
 )
 
+POSTMAN_CASKS=(
+  postman
+)
+
 ORBSTACK_CASKS=(
   orbstack
 )
@@ -97,11 +102,12 @@ Usage:
 
 Examples:
   ./mac
-  ./mac webstorm android orbstack
+  ./mac webstorm postman android orbstack
   ./mac full
 
 Extras:
   webstorm   Install WebStorm
+  postman    Install Postman
   android    Install Android Studio and Android tooling
   orbstack   Install OrbStack
   docker     Install Docker
@@ -124,6 +130,9 @@ parse_args() {
       webstorm|web|--webstorm|--web)
         INSTALL_WEBSTORM=1
         ;;
+      postman|api|--postman|--api)
+        INSTALL_POSTMAN=1
+        ;;
       android|--android)
         INSTALL_ANDROID=1
         ;;
@@ -138,6 +147,7 @@ parse_args() {
         ;;
       full|all|--full|--all)
         INSTALL_WEBSTORM=1
+        INSTALL_POSTMAN=1
         INSTALL_ANDROID=1
         INSTALL_ORBSTACK=1
         INSTALL_DEV_SERVICES=1
@@ -407,6 +417,7 @@ ${android_next_step}
 
 Common reruns:
   ./mac webstorm
+  ./mac postman
   ./mac android
   ./mac orbstack
   ./mac docker
@@ -442,6 +453,10 @@ main() {
 
   if is_enabled "$INSTALL_WEBSTORM"; then
     brew_install_casks "${WEBSTORM_CASKS[@]}"
+  fi
+
+  if is_enabled "$INSTALL_POSTMAN"; then
+    brew_install_casks "${POSTMAN_CASKS[@]}"
   fi
 
   if is_enabled "$INSTALL_ORBSTACK"; then

@@ -32,13 +32,14 @@ The script also adds a small managed block to `~/.zshrc` so Homebrew is availabl
 ## Optional
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- webstorm postman android orbstack
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- webstorm postman notchnook android orbstack
 ```
 
 Extras you can add:
 
 - `webstorm`
 - `postman`
+- `notchnook`
 - `android`
 - `orbstack`
 - `docker`

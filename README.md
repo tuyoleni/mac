@@ -32,13 +32,14 @@ The script also adds a small managed block to `~/.zshrc` so Homebrew is availabl
 ## Optional
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- webstorm android docker
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- webstorm android orbstack
 ```
 
 Extras you can add:
 
 - `webstorm`
 - `android`
+- `orbstack`
 - `docker`
 - `services`
 - `full`

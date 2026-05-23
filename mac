@@ -10,10 +10,10 @@ IFS=$'\n\t'
 # Hosted usage:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- full
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- webstorm android docker
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- webstorm android orbstack
 #
 # Useful overrides:
-#   ./mac webstorm android docker
+#   ./mac webstorm android orbstack
 #   ./mac full
 #   GIT_USER_NAME="Your Name" GIT_USER_EMAIL="you@example.com" ./mac
 #   GENERATE_SSH_KEY=1 GIT_USER_EMAIL="you@example.com" ./mac
@@ -21,6 +21,7 @@ IFS=$'\n\t'
 INSTALL_WEBSTORM="${INSTALL_WEBSTORM:-0}"
 INSTALL_ANDROID="${INSTALL_ANDROID:-0}"
 INSTALL_LANGUAGES="${INSTALL_LANGUAGES:-1}"
+INSTALL_ORBSTACK="${INSTALL_ORBSTACK:-0}"
 INSTALL_DOCKER="${INSTALL_DOCKER:-0}"
 INSTALL_DEV_SERVICES="${INSTALL_DEV_SERVICES:-0}"
 GENERATE_SSH_KEY="${GENERATE_SSH_KEY:-0}"
@@ -61,6 +62,10 @@ WEBSTORM_CASKS=(
   webstorm
 )
 
+ORBSTACK_CASKS=(
+  orbstack
+)
+
 log() {
   printf '\033[1;34m==>\033[0m %s\n' "$*"
 }
@@ -92,12 +97,13 @@ Usage:
 
 Examples:
   ./mac
-  ./mac webstorm android docker
+  ./mac webstorm android orbstack
   ./mac full
 
 Extras:
   webstorm   Install WebStorm
   android    Install Android Studio and Android tooling
+  orbstack   Install OrbStack
   docker     Install Docker
   services   Install PostgreSQL and Redis
   full       Install all extras
@@ -121,6 +127,9 @@ parse_args() {
       android|--android)
         INSTALL_ANDROID=1
         ;;
+      orbstack|orb|--orbstack|--orb)
+        INSTALL_ORBSTACK=1
+        ;;
       docker|--docker)
         INSTALL_DOCKER=1
         ;;
@@ -130,7 +139,7 @@ parse_args() {
       full|all|--full|--all)
         INSTALL_WEBSTORM=1
         INSTALL_ANDROID=1
-        INSTALL_DOCKER=1
+        INSTALL_ORBSTACK=1
         INSTALL_DEV_SERVICES=1
         ;;
       *)
@@ -399,6 +408,7 @@ ${android_next_step}
 Common reruns:
   ./mac webstorm
   ./mac android
+  ./mac orbstack
   ./mac docker
   ./mac services
   ./mac full
@@ -432,6 +442,10 @@ main() {
 
   if is_enabled "$INSTALL_WEBSTORM"; then
     brew_install_casks "${WEBSTORM_CASKS[@]}"
+  fi
+
+  if is_enabled "$INSTALL_ORBSTACK"; then
+    brew_install_casks "${ORBSTACK_CASKS[@]}"
   fi
 
   if is_enabled "$INSTALL_DOCKER"; then

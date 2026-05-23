@@ -32,6 +32,7 @@ Apps installed after core:
 - WebStorm
 - Postman
 - NotchNook
+- Arc
 - OrbStack
 
 The script also adds a small managed block to `~/.zshrc` so Homebrew is available in new terminals.

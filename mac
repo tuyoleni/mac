@@ -60,6 +60,7 @@ DEFAULT_CASKS=(
   webstorm
   postman
   notchnook
+  arc
   orbstack
 )
 

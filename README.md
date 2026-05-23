@@ -20,28 +20,31 @@ With Git identity:
 GIT_USER_NAME="Your Name" GIT_USER_EMAIL="you@example.com" /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
 ```
 
-## Core
+## Default
 
+Core:
 - Homebrew
 - Xcode Command Line Tools
 - Git, Git LFS, GitHub CLI
 - Node.js and Python
+
+Apps installed after core:
+- WebStorm
+- Postman
+- NotchNook
+- OrbStack
 
 The script also adds a small managed block to `~/.zshrc` so Homebrew is available in new terminals.
 
 ## Optional
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- webstorm postman notchnook android orbstack
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- android services
 ```
 
 Extras you can add:
 
-- `webstorm`
-- `postman`
-- `notchnook`
 - `android`
-- `orbstack`
 - `docker`
 - `services`
 - `full`

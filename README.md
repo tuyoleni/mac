@@ -19,9 +19,9 @@ GIT_USER_NAME="Your Name" GIT_USER_EMAIL="you@example.com" /bin/bash -c "$(curl 
 - Homebrew
 - Xcode Command Line Tools
 - Git, Git LFS, GitHub CLI
-- Node.js, Python, pnpm, Yarn
-- Common CLI tools: `jq`, `ripgrep`, `fzf`, `bat`, `eza`, `tree`, `tmux`, `shellcheck`, `shfmt`
-- Shell setup for Homebrew, `mise`, `direnv`, `zoxide`, and `starship`
+- Node.js and Python
+
+The script also adds a small managed block to `~/.zshrc` so Homebrew is available in new terminals.
 
 ## Optional
 
@@ -41,4 +41,4 @@ chmod +x mac
 ./mac
 ```
 
-The script is safe to rerun. It keeps a managed block in `~/.zshrc` and updates that block on future runs.
+The script is safe to rerun.

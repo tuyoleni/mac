@@ -13,13 +13,11 @@ IFS=$'\n\t'
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- android docker
 #
 # Useful overrides:
-#   ./mac apps
 #   ./mac android docker
 #   ./mac full
 #   GIT_USER_NAME="Your Name" GIT_USER_EMAIL="you@example.com" ./mac
 #   GENERATE_SSH_KEY=1 GIT_USER_EMAIL="you@example.com" ./mac
 
-INSTALL_GUI_APPS="${INSTALL_GUI_APPS:-0}"
 INSTALL_ANDROID="${INSTALL_ANDROID:-0}"
 INSTALL_LANGUAGES="${INSTALL_LANGUAGES:-1}"
 INSTALL_DOCKER="${INSTALL_DOCKER:-0}"
@@ -38,13 +36,6 @@ BREW_FORMULAE=(
 LANGUAGE_FORMULAE=(
   node
   python
-)
-
-GUI_CASKS=(
-  visual-studio-code
-  iterm2
-  rectangle
-  google-chrome
 )
 
 DEV_SERVICE_FORMULAE=(
@@ -96,12 +87,10 @@ Usage:
 
 Examples:
   ./mac
-  ./mac apps
   ./mac android docker
   ./mac full
 
 Extras:
-  apps       Install GUI apps
   android    Install Android Studio and Android tooling
   docker     Install Docker
   services   Install PostgreSQL and Redis
@@ -120,9 +109,6 @@ parse_args() {
         ;;
       core|--core)
         ;;
-      apps|app|gui|--apps|--app|--gui)
-        INSTALL_GUI_APPS=1
-        ;;
       android|--android)
         INSTALL_ANDROID=1
         ;;
@@ -133,7 +119,6 @@ parse_args() {
         INSTALL_DEV_SERVICES=1
         ;;
       full|all|--full|--all)
-        INSTALL_GUI_APPS=1
         INSTALL_ANDROID=1
         INSTALL_DOCKER=1
         INSTALL_DEV_SERVICES=1
@@ -402,7 +387,6 @@ ${android_next_step}
      $HOME/.ssh/id_ed25519.pub
 
 Common reruns:
-  ./mac apps
   ./mac android
   ./mac docker
   ./mac services
@@ -433,10 +417,6 @@ main() {
   if is_enabled "$INSTALL_ANDROID"; then
     brew_install_formulae "${ANDROID_FORMULAE[@]}"
     brew_install_casks "${ANDROID_CASKS[@]}"
-  fi
-
-  if is_enabled "$INSTALL_GUI_APPS"; then
-    brew_install_casks "${GUI_CASKS[@]}"
   fi
 
   if is_enabled "$INSTALL_DOCKER"; then

@@ -37,7 +37,6 @@ The script also adds a small managed block to `~/.zshrc` so Homebrew is availabl
 
 Extras you can add:
 
-- `apps`
 - `android`
 - `docker`
 - `services`

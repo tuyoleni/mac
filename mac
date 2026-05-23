@@ -9,13 +9,14 @@ IFS=$'\n\t'
 #
 # Hosted usage:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- full
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- android docker
 #
 # Useful overrides:
+#   ./mac apps
+#   ./mac android docker
+#   ./mac full
 #   GIT_USER_NAME="Your Name" GIT_USER_EMAIL="you@example.com" ./mac
-#   INSTALL_GUI_APPS=1 ./mac
-#   INSTALL_ANDROID=1 ./mac
-#   INSTALL_DOCKER=1 ./mac
-#   INSTALL_DEV_SERVICES=1 ./mac
 #   GENERATE_SSH_KEY=1 GIT_USER_EMAIL="you@example.com" ./mac
 
 INSTALL_GUI_APPS="${INSTALL_GUI_APPS:-0}"
@@ -86,6 +87,62 @@ is_enabled() {
     1|true|TRUE|yes|YES|on|ON) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./mac [extras...]
+
+Examples:
+  ./mac
+  ./mac apps
+  ./mac android docker
+  ./mac full
+
+Extras:
+  apps       Install GUI apps
+  android    Install Android Studio and Android tooling
+  docker     Install Docker
+  services   Install PostgreSQL and Redis
+  full       Install all extras
+EOF
+}
+
+parse_args() {
+  local arg
+
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      core|--core)
+        ;;
+      apps|app|gui|--apps|--app|--gui)
+        INSTALL_GUI_APPS=1
+        ;;
+      android|--android)
+        INSTALL_ANDROID=1
+        ;;
+      docker|--docker)
+        INSTALL_DOCKER=1
+        ;;
+      services|service|db|database|databases|--services|--service|--db|--database|--databases)
+        INSTALL_DEV_SERVICES=1
+        ;;
+      full|all|--full|--all)
+        INSTALL_GUI_APPS=1
+        INSTALL_ANDROID=1
+        INSTALL_DOCKER=1
+        INSTALL_DEV_SERVICES=1
+        ;;
+      *)
+        die "Unknown option: $arg. Run ./mac help for usage."
+        ;;
+    esac
+  done
 }
 
 ensure_macos() {
@@ -345,16 +402,19 @@ ${android_next_step}
      $HOME/.ssh/id_ed25519.pub
 
 Common reruns:
-  INSTALL_GUI_APPS=1 ./mac
-  INSTALL_ANDROID=1 ./mac
-  INSTALL_DOCKER=1 ./mac
-  INSTALL_DEV_SERVICES=1 ./mac
+  ./mac apps
+  ./mac android
+  ./mac docker
+  ./mac services
+  ./mac full
   APPLY_MACOS_DEFAULTS=1 ./mac
 
 EOF
 }
 
 main() {
+  parse_args "$@"
+
   ensure_macos
   keep_sudo_alive
   install_command_line_tools

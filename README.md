@@ -8,6 +8,12 @@ Fresh macOS developer setup in one small script.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
 ```
 
+Install everything:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- full
+```
+
 With Git identity:
 
 ```bash
@@ -26,11 +32,16 @@ The script also adds a small managed block to `~/.zshrc` so Homebrew is availabl
 ## Optional
 
 ```bash
-INSTALL_GUI_APPS=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
-INSTALL_ANDROID=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
-INSTALL_DOCKER=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
-INSTALL_DEV_SERVICES=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- android docker
 ```
+
+Extras you can add:
+
+- `apps`
+- `android`
+- `docker`
+- `services`
+- `full`
 
 ## Review First
 

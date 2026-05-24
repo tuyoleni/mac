@@ -400,8 +400,6 @@ main() {
     brew_install_formulae "${LANGUAGE_FORMULAE[@]}"
   fi
 
-  brew_install_formulae "${ANDROID_FORMULAE[@]}"
-  brew_install_casks "${ANDROID_CASKS[@]}"
   brew_install_casks "${DEFAULT_CASKS[@]}"
 
   if is_enabled "$INSTALL_DEV_SERVICES"; then
@@ -411,6 +409,9 @@ main() {
   if is_enabled "$INSTALL_DOCKER"; then
     brew_install_casks docker
   fi
+
+  brew_install_formulae "${ANDROID_FORMULAE[@]}"
+  brew_install_casks "${ANDROID_CASKS[@]}"
 
   configure_git
   configure_ssh_key

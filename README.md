@@ -29,12 +29,12 @@ Core:
 - Node.js and Python
 
 Apps installed after core:
-- Android Studio and Android tooling
 - WebStorm
 - Postman
 - NotchNook
 - Arc
 - OrbStack
+- Android Studio and Android tooling, installed last
 
 The script also adds a small managed block to `~/.zshrc` so Homebrew is available in new terminals.
 

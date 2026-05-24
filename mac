@@ -44,7 +44,6 @@ DEV_SERVICE_FORMULAE=(
 
 ANDROID_CASKS=(
   android-studio
-  temurin
 )
 
 DEFAULT_CASKS=(

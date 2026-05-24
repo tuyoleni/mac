@@ -91,18 +91,14 @@ is_enabled() {
 usage() {
   cat <<'EOF'
 Usage:
-  ./mac [extras...]
+  ./mac [full]
 
 Examples:
   ./mac
-  ./mac android services
   ./mac full
 
-Extras:
-  android    Install Android Studio and Android tooling
-  docker     Install Docker
-  services   Install PostgreSQL and Redis
-  full       Install Android tooling and services
+Options:
+  full       Also install Android tooling and services
 EOF
 }
 

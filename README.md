@@ -37,19 +37,6 @@ Apps installed after core:
 
 The script also adds a small managed block to `~/.zshrc` so Homebrew is available in new terminals.
 
-## Optional
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- android services
-```
-
-Extras you can add:
-
-- `android`
-- `docker`
-- `services`
-- `full`
-
 ## Review First
 
 ```bash

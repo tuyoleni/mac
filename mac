@@ -10,15 +10,14 @@ IFS=$'\n\t'
 # Hosted usage:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- full
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- android services
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- services
 #
 # Useful overrides:
-#   ./mac android services
+#   ./mac services
 #   ./mac full
 #   GIT_USER_NAME="Your Name" GIT_USER_EMAIL="you@example.com" ./mac
 #   GENERATE_SSH_KEY=1 GIT_USER_EMAIL="you@example.com" ./mac
 
-INSTALL_ANDROID="${INSTALL_ANDROID:-0}"
 INSTALL_LANGUAGES="${INSTALL_LANGUAGES:-1}"
 INSTALL_DOCKER="${INSTALL_DOCKER:-0}"
 INSTALL_DEV_SERVICES="${INSTALL_DEV_SERVICES:-0}"
@@ -98,7 +97,7 @@ Examples:
   ./mac full
 
 Options:
-  full       Also install Android tooling and services
+  full       Also install services
 EOF
 }
 
@@ -113,9 +112,6 @@ parse_args() {
         ;;
       core|--core)
         ;;
-      android|--android)
-        INSTALL_ANDROID=1
-        ;;
       docker|--docker)
         INSTALL_DOCKER=1
         ;;
@@ -123,7 +119,6 @@ parse_args() {
         INSTALL_DEV_SERVICES=1
         ;;
       full|all|--full|--all)
-        INSTALL_ANDROID=1
         INSTALL_DEV_SERVICES=1
         ;;
       *)
@@ -371,13 +366,6 @@ apply_macos_defaults() {
 }
 
 print_next_steps() {
-  local android_next_step
-
-  android_next_step=""
-  if is_enabled "$INSTALL_ANDROID"; then
-    android_next_step="  - Open Android Studio once to finish SDK setup and accept Android licenses."
-  fi
-
   cat <<EOF
 
 Done.
@@ -385,12 +373,11 @@ Done.
 Next steps:
   - Restart your terminal or run: source "\${ZDOTDIR:-\$HOME}/.zshrc"
   - If you use GitHub, authenticate with: gh auth login
-${android_next_step}
+  - Open Android Studio once to finish SDK setup and accept Android licenses.
   - If you generated an SSH key, add this public key to GitHub/GitLab:
      $HOME/.ssh/id_ed25519.pub
 
 Common reruns:
-  ./mac android
   ./mac docker
   ./mac services
   ./mac full
@@ -413,15 +400,12 @@ main() {
     brew_install_formulae "${LANGUAGE_FORMULAE[@]}"
   fi
 
+  brew_install_formulae "${ANDROID_FORMULAE[@]}"
+  brew_install_casks "${ANDROID_CASKS[@]}"
   brew_install_casks "${DEFAULT_CASKS[@]}"
 
   if is_enabled "$INSTALL_DEV_SERVICES"; then
     brew_install_formulae "${DEV_SERVICE_FORMULAE[@]}"
-  fi
-
-  if is_enabled "$INSTALL_ANDROID"; then
-    brew_install_formulae "${ANDROID_FORMULAE[@]}"
-    brew_install_casks "${ANDROID_CASKS[@]}"
   fi
 
   if is_enabled "$INSTALL_DOCKER"; then

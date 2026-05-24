@@ -29,6 +29,7 @@ Core:
 - Node.js and Python
 
 Apps installed after core:
+- Android Studio and Android tooling
 - WebStorm
 - Postman
 - NotchNook

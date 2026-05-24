@@ -1,65 +1,29 @@
-cat > ~/workspace-os.sh << 'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-IFS=$'\n\t'
-
 # =========================
-# WORKSPACE OS (MAC CLONE OF WORKING LINUX SETUP)
+# WORKSPACE OS LAYER (YOUR SYSTEM)
 # =========================
 
 WORKSPACES=("personal" "moodbod" "asmbly")
 BASE="$HOME/.profiles"
 
-log() { echo "==> $*"; }
-
-have() { command -v "$1" >/dev/null 2>&1; }
-
-# -------------------------
-# BREW BOOTSTRAP
-# -------------------------
-install_brew() {
-  if ! have brew; then
-    log "Installing Homebrew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  fi
-
-  eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
-}
-
-install_tools() {
-  log "Installing CLI tools..."
-
-  brew update
-
-  brew install git gh node python || true
-
-  brew install --cask orbstack vercel google-cloud-sdk || true
-}
-
-# -------------------------
-# WORKSPACE SYSTEM (EXACT COPY OF YOUR WORKING MODEL)
-# -------------------------
 setup_workspaces() {
-  log "Setting up workspaces..."
+  log "Setting up workspace system..."
 
   mkdir -p "$BASE"
 
   for ws in "${WORKSPACES[@]}"; do
-    log "Creating $ws"
+    log "Workspace: $ws"
 
     mkdir -p "$BASE/$ws"/{home,gcloud,ssh,vercel,convex}
 
-    # SSH KEY (same behavior you already used)
+    # SSH per workspace (stable, reproducible)
     if [[ ! -f "$BASE/$ws/ssh/id_ed25519" ]]; then
       ssh-keygen -t ed25519 -C "$ws@mac" \
         -f "$BASE/$ws/ssh/id_ed25519" -N "" >/dev/null 2>&1 || true
     fi
 
-    # ENV FILE (this is EXACT core of your working system)
-    cat > "$BASE/$ws/env.sh" << EOF2
+    # ENV (this is your real working model)
+    cat > "$BASE/$ws/env.sh" << EOF
 export PROFILE_NAME="$ws"
-
-export HOME="$BASE/$ws/home"
 
 export GIT_AUTHOR_NAME="$ws"
 export GIT_AUTHOR_EMAIL="$ws@dev.local"
@@ -69,22 +33,18 @@ export CLOUDSDK_CONFIG="$BASE/$ws/gcloud"
 export GIT_SSH_COMMAND="ssh -i $BASE/$ws/ssh/id_ed25519"
 
 export PS1="($ws) %~ %# "
-EOF2
+EOF
 
   done
 }
 
-# -------------------------
-# SWITCHER (YOUR ORIGINAL WORKING STYLE)
-# -------------------------
 setup_switcher() {
-  cat > "$HOME/workspace-switcher.sh" << 'SWITCH'
+  cat > "$HOME/workspace-switcher.sh" << 'EOF'
 WORKSPACES=("personal" "moodbod" "asmbly")
 BASE="$HOME/.profiles"
 
 switch_workspace() {
   ws=$1
-
   source "$BASE/$ws/env.sh"
 
   export CLOUDSDK_CONFIG="$BASE/$ws/gcloud"
@@ -95,48 +55,11 @@ switch_workspace() {
 alias personal='switch_workspace personal'
 alias moodbod='switch_workspace moodbod'
 alias asmbly='switch_workspace asmbly'
-SWITCH
+EOF
 
   grep -q workspace-switcher.sh ~/.zshrc || \
     echo "source ~/workspace-switcher.sh" >> ~/.zshrc
 }
 
-# -------------------------
-# SSH DEFAULT (GLOBAL FALLBACK)
-# -------------------------
-setup_global_ssh() {
-  mkdir -p "$HOME/.ssh"
-  [[ -f "$HOME/.ssh/id_ed25519" ]] || \
-    ssh-keygen -t ed25519 -C "mac-global" -f "$HOME/.ssh/id_ed25519" -N "" || true
-}
-
-# -------------------------
-# CONVEX (IMPORTANT: correct model)
-# -------------------------
-setup_convex_note() {
-  log "Convex is CLI + project-based (no per-profile auth)"
-  log "Use: npx convex dev inside each workspace project"
-}
-
-# -------------------------
-# MAIN
-# -------------------------
-main() {
-  install_brew
-  install_tools
-
-  setup_workspaces
-  setup_switcher
-  setup_global_ssh
-  setup_convex_note
-
-  brew cleanup || true
-
-  echo ""
-  echo "✅ WORKSPACE OS READY"
-  echo "Run:"
-  echo "  source ~/.zshrc"
-  echo "  personal | moodbod | asmbly"
-}
-main "$@"
-EOF
+setup_workspaces
+setup_switcher

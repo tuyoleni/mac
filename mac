@@ -1,415 +1,142 @@
+cat > ~/workspace-os.sh << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 IFS=$'\n\t'
 
-# One-shot macOS developer setup.
-#
-# Local usage:
-#   ./mac
-#
-# Hosted usage:
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- full
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)" -- services
-#
-# Useful overrides:
-#   ./mac services
-#   ./mac full
-#   GIT_USER_NAME="Your Name" GIT_USER_EMAIL="you@example.com" ./mac
-#   GENERATE_SSH_KEY=1 GIT_USER_EMAIL="you@example.com" ./mac
+# =========================
+# WORKSPACE OS (MAC CLONE OF WORKING LINUX SETUP)
+# =========================
 
-INSTALL_LANGUAGES="${INSTALL_LANGUAGES:-1}"
-INSTALL_DOCKER="${INSTALL_DOCKER:-0}"
-INSTALL_DEV_SERVICES="${INSTALL_DEV_SERVICES:-0}"
-GENERATE_SSH_KEY="${GENERATE_SSH_KEY:-0}"
-APPLY_MACOS_DEFAULTS="${APPLY_MACOS_DEFAULTS:-0}"
-SKIP_SHELL_SETUP="${SKIP_SHELL_SETUP:-0}"
-ASK_FOR_SUDO="${ASK_FOR_SUDO:-1}"
+WORKSPACES=("personal" "moodbod" "asmbly")
+BASE="$HOME/.profiles"
 
-BREW_FORMULAE=(
-  git
-  git-lfs
-  gh
-)
+log() { echo "==> $*"; }
 
-LANGUAGE_FORMULAE=(
-  node
-  python
-)
+have() { command -v "$1" >/dev/null 2>&1; }
 
-DEV_SERVICE_FORMULAE=(
-  postgresql@16
-  redis
-)
-
-ANDROID_CASKS=(
-  android-studio
-)
-
-DEFAULT_CASKS=(
-  webstorm
-  postman
-  notchnook
-  arc
-  orbstack
-)
-
-log() {
-  printf '\033[1;34m==>\033[0m %s\n' "$*"
-}
-
-warn() {
-  printf '\033[1;33mWarning:\033[0m %s\n' "$*" >&2
-}
-
-die() {
-  printf '\033[1;31mError:\033[0m %s\n' "$*" >&2
-  exit 1
-}
-
-have() {
-  command -v "$1" >/dev/null 2>&1
-}
-
-is_enabled() {
-  case "${1:-}" in
-    1|true|TRUE|yes|YES|on|ON) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-usage() {
-  cat <<'EOF'
-Usage:
-  ./mac [full]
-
-Examples:
-  ./mac
-  ./mac full
-
-Options:
-  full       Also install services
-EOF
-}
-
-parse_args() {
-  local arg
-
-  for arg in "$@"; do
-    case "$arg" in
-      -h|--help|help)
-        usage
-        exit 0
-        ;;
-      core|--core)
-        ;;
-      docker|--docker)
-        INSTALL_DOCKER=1
-        ;;
-      services|service|db|database|databases|--services|--service|--db|--database|--databases)
-        INSTALL_DEV_SERVICES=1
-        ;;
-      full|all|--full|--all)
-        INSTALL_DEV_SERVICES=1
-        ;;
-      *)
-        die "Unknown option: $arg. Run ./mac help for usage."
-        ;;
-    esac
-  done
-}
-
-ensure_macos() {
-  [[ "$(uname -s)" == "Darwin" ]] || die "This script is intended for macOS."
-}
-
-keep_sudo_alive() {
-  is_enabled "$ASK_FOR_SUDO" || return 0
-
-  log "Requesting sudo once so setup can install system components"
-  sudo -v
-
-  while true; do
-    sudo -n true
-    sleep 60
-    kill -0 "$$" >/dev/null 2>&1 || exit
-  done 2>/dev/null &
-
-  SUDO_KEEPALIVE_PID="$!"
-  trap 'kill "${SUDO_KEEPALIVE_PID:-}" >/dev/null 2>&1 || true' EXIT
-}
-
-install_command_line_tools() {
-  if xcode-select -p >/dev/null 2>&1; then
-    log "Xcode Command Line Tools already installed"
-    return 0
-  fi
-
-  log "Installing Xcode Command Line Tools"
-  xcode-select --install >/dev/null 2>&1 || true
-
-  printf '\nComplete the Command Line Tools installer window, then press Return here. '
-  read -r _
-
-  until xcode-select -p >/dev/null 2>&1; do
-    printf 'Command Line Tools are not detected yet. Press Return after the installer finishes, or Ctrl-C to stop. '
-    read -r _
-  done
-}
-
-load_brew_shellenv() {
-  if [[ -x /opt/homebrew/bin/brew ]]; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-  elif [[ -x /usr/local/bin/brew ]]; then
-    eval "$(/usr/local/bin/brew shellenv)"
-  elif have brew; then
-    eval "$(brew shellenv)"
-  fi
-}
-
-install_homebrew() {
-  load_brew_shellenv
-
-  if have brew; then
-    log "Homebrew already installed at $(command -v brew)"
-  else
-    log "Installing Homebrew"
+# -------------------------
+# BREW BOOTSTRAP
+# -------------------------
+install_brew() {
+  if ! have brew; then
+    log "Installing Homebrew..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    load_brew_shellenv
   fi
 
-  have brew || die "Homebrew install finished, but brew is not on PATH."
+  eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
+}
 
-  brew analytics off >/dev/null 2>&1 || true
-  log "Updating Homebrew"
+install_tools() {
+  log "Installing CLI tools..."
+
   brew update
+
+  brew install git gh node python || true
+
+  brew install --cask orbstack vercel google-cloud-sdk || true
 }
 
-brew_install_formulae() {
-  local formula
+# -------------------------
+# WORKSPACE SYSTEM (EXACT COPY OF YOUR WORKING MODEL)
+# -------------------------
+setup_workspaces() {
+  log "Setting up workspaces..."
 
-  for formula in "$@"; do
-    if brew list --formula "$formula" >/dev/null 2>&1; then
-      log "Formula already installed: $formula"
-    else
-      log "Installing formula: $formula"
-      brew install "$formula"
+  mkdir -p "$BASE"
+
+  for ws in "${WORKSPACES[@]}"; do
+    log "Creating $ws"
+
+    mkdir -p "$BASE/$ws"/{home,gcloud,ssh,vercel,convex}
+
+    # SSH KEY (same behavior you already used)
+    if [[ ! -f "$BASE/$ws/ssh/id_ed25519" ]]; then
+      ssh-keygen -t ed25519 -C "$ws@mac" \
+        -f "$BASE/$ws/ssh/id_ed25519" -N "" >/dev/null 2>&1 || true
     fi
+
+    # ENV FILE (this is EXACT core of your working system)
+    cat > "$BASE/$ws/env.sh" << EOF2
+export PROFILE_NAME="$ws"
+
+export HOME="$BASE/$ws/home"
+
+export GIT_AUTHOR_NAME="$ws"
+export GIT_AUTHOR_EMAIL="$ws@dev.local"
+
+export CLOUDSDK_CONFIG="$BASE/$ws/gcloud"
+
+export GIT_SSH_COMMAND="ssh -i $BASE/$ws/ssh/id_ed25519"
+
+export PS1="($ws) %~ %# "
+EOF2
+
   done
 }
 
-brew_install_casks() {
-  local cask
+# -------------------------
+# SWITCHER (YOUR ORIGINAL WORKING STYLE)
+# -------------------------
+setup_switcher() {
+  cat > "$HOME/workspace-switcher.sh" << 'SWITCH'
+WORKSPACES=("personal" "moodbod" "asmbly")
+BASE="$HOME/.profiles"
 
-  for cask in "$@"; do
-    if brew list --cask "$cask" >/dev/null 2>&1; then
-      log "Cask already installed: $cask"
-    else
-      log "Installing cask: $cask"
-      brew install --cask "$cask"
-    fi
-  done
+switch_workspace() {
+  ws=$1
+
+  source "$BASE/$ws/env.sh"
+
+  export CLOUDSDK_CONFIG="$BASE/$ws/gcloud"
+
+  echo "Switched to $ws"
 }
 
-configure_git() {
-  have git || return 0
+alias personal='switch_workspace personal'
+alias moodbod='switch_workspace moodbod'
+alias asmbly='switch_workspace asmbly'
+SWITCH
 
-  log "Configuring Git defaults"
-  git config --global init.defaultBranch main
-  git config --global core.autocrlf input
-  git config --global push.autoSetupRemote true
-  git config --global fetch.prune true
-
-  if [[ -n "${GIT_USER_NAME:-}" ]]; then
-    git config --global user.name "$GIT_USER_NAME"
-  fi
-
-  if [[ -n "${GIT_USER_EMAIL:-}" ]]; then
-    git config --global user.email "$GIT_USER_EMAIL"
-  fi
-
-  if have code; then
-    git config --global core.editor "code --wait"
-  fi
-
-  if have git-lfs; then
-    git lfs install --skip-repo
-  fi
+  grep -q workspace-switcher.sh ~/.zshrc || \
+    echo "source ~/workspace-switcher.sh" >> ~/.zshrc
 }
 
-configure_ssh_key() {
-  is_enabled "$GENERATE_SSH_KEY" || return 0
-
+# -------------------------
+# SSH DEFAULT (GLOBAL FALLBACK)
+# -------------------------
+setup_global_ssh() {
   mkdir -p "$HOME/.ssh"
-  chmod 700 "$HOME/.ssh"
-
-  if [[ -f "$HOME/.ssh/id_ed25519" ]]; then
-    log "SSH key already exists: $HOME/.ssh/id_ed25519"
-    return 0
-  fi
-
-  local ssh_comment
-  ssh_comment="${GIT_USER_EMAIL:-$USER@$(hostname)}"
-
-  log "Generating SSH key: $HOME/.ssh/id_ed25519"
-  ssh-keygen -t ed25519 -C "$ssh_comment" -f "$HOME/.ssh/id_ed25519" -N ""
-
-  if ssh-add --help 2>&1 | grep -q -- '--apple-use-keychain'; then
-    ssh-add --apple-use-keychain "$HOME/.ssh/id_ed25519" || true
-  else
-    ssh-add "$HOME/.ssh/id_ed25519" || true
-  fi
+  [[ -f "$HOME/.ssh/id_ed25519" ]] || \
+    ssh-keygen -t ed25519 -C "mac-global" -f "$HOME/.ssh/id_ed25519" -N "" || true
 }
 
-replace_managed_block() {
-  local file="$1"
-  local start_marker="$2"
-  local end_marker="$3"
-  local block="$4"
-  local tmp_file
-
-  mkdir -p "$(dirname "$file")"
-  touch "$file"
-  tmp_file="$(mktemp)"
-
-  awk -v start="$start_marker" -v end="$end_marker" '
-    $0 == start { skipping = 1; next }
-    $0 == end { skipping = 0; next }
-    skipping != 1 { print }
-  ' "$file" > "$tmp_file"
-
-  {
-    printf '%s\n' "$block"
-    printf '\n'
-    cat "$tmp_file"
-  } > "$file"
-
-  rm -f "$tmp_file"
+# -------------------------
+# CONVEX (IMPORTANT: correct model)
+# -------------------------
+setup_convex_note() {
+  log "Convex is CLI + project-based (no per-profile auth)"
+  log "Use: npx convex dev inside each workspace project"
 }
 
-setup_shell() {
-  is_enabled "$SKIP_SHELL_SETUP" && return 0
-
-  local zshrc
-  local start_marker
-  local end_marker
-  local block
-
-  zshrc="${ZDOTDIR:-$HOME}/.zshrc"
-  start_marker="# >>> mac >>>"
-  end_marker="# <<< mac <<<"
-
-  block="$(cat <<'EOF'
-# >>> mac >>>
-if [[ -x /opt/homebrew/bin/brew ]]; then
-  eval "$(/opt/homebrew/bin/brew shellenv)"
-elif [[ -x /usr/local/bin/brew ]]; then
-  eval "$(/usr/local/bin/brew shellenv)"
-fi
-
-typeset -U path PATH
-
-if [[ -d "$HOME/Library/Android/sdk" ]]; then
-  export ANDROID_HOME="$HOME/Library/Android/sdk"
-  export ANDROID_SDK_ROOT="$ANDROID_HOME"
-
-  if [[ -d "$ANDROID_HOME/platform-tools" ]]; then
-    path=("$ANDROID_HOME/platform-tools" $path)
-  fi
-
-  if [[ -d "$ANDROID_HOME/emulator" ]]; then
-    path=("$ANDROID_HOME/emulator" $path)
-  fi
-
-  if [[ -d "$ANDROID_HOME/cmdline-tools/latest/bin" ]]; then
-    path=("$ANDROID_HOME/cmdline-tools/latest/bin" $path)
-  fi
-fi
-
-if [[ -x /usr/libexec/java_home ]]; then
-  java_home_path="$(/usr/libexec/java_home 2>/dev/null || true)"
-  if [[ -n "$java_home_path" ]]; then
-    export JAVA_HOME="$java_home_path"
-  fi
-  unset java_home_path
-fi
-# <<< mac <<<
-EOF
-)"
-
-  log "Updating shell setup in $zshrc"
-  replace_managed_block "$zshrc" "$start_marker" "$end_marker" "$block"
-}
-
-apply_macos_defaults() {
-  is_enabled "$APPLY_MACOS_DEFAULTS" || return 0
-
-  log "Applying optional macOS defaults"
-  defaults write NSGlobalDomain AppleShowAllExtensions -bool true
-  defaults write NSGlobalDomain InitialKeyRepeat -int 15
-  defaults write NSGlobalDomain KeyRepeat -int 2
-  defaults write com.apple.finder ShowPathbar -bool true
-  defaults write com.apple.finder ShowStatusBar -bool true
-  defaults write com.apple.dock autohide -bool true
-
-  killall Finder >/dev/null 2>&1 || true
-  killall Dock >/dev/null 2>&1 || true
-}
-
-print_next_steps() {
-  cat <<EOF
-
-Done.
-
-Next steps:
-  - Restart your terminal or run: source "\${ZDOTDIR:-\$HOME}/.zshrc"
-  - If you use GitHub, authenticate with: gh auth login
-  - Open Android Studio once to finish SDK setup and accept Android licenses.
-  - If you generated an SSH key, add this public key to GitHub/GitLab:
-     $HOME/.ssh/id_ed25519.pub
-
-Common reruns:
-  ./mac docker
-  ./mac services
-  ./mac full
-  APPLY_MACOS_DEFAULTS=1 ./mac
-
-EOF
-}
-
+# -------------------------
+# MAIN
+# -------------------------
 main() {
-  parse_args "$@"
+  install_brew
+  install_tools
 
-  ensure_macos
-  keep_sudo_alive
-  install_command_line_tools
-  install_homebrew
-
-  brew_install_formulae "${BREW_FORMULAE[@]}"
-
-  if is_enabled "$INSTALL_LANGUAGES"; then
-    brew_install_formulae "${LANGUAGE_FORMULAE[@]}"
-  fi
-
-  brew_install_casks "${DEFAULT_CASKS[@]}"
-
-  if is_enabled "$INSTALL_DEV_SERVICES"; then
-    brew_install_formulae "${DEV_SERVICE_FORMULAE[@]}"
-  fi
-
-  if is_enabled "$INSTALL_DOCKER"; then
-    brew_install_casks docker
-  fi
-
-  brew_install_casks "${ANDROID_CASKS[@]}"
-
-  configure_git
-  configure_ssh_key
-  setup_shell
-  apply_macos_defaults
+  setup_workspaces
+  setup_switcher
+  setup_global_ssh
+  setup_convex_note
 
   brew cleanup || true
-  print_next_steps
-}
 
+  echo ""
+  echo "✅ WORKSPACE OS READY"
+  echo "Run:"
+  echo "  source ~/.zshrc"
+  echo "  personal | moodbod | asmbly"
+}
 main "$@"
+EOF

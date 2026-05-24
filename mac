@@ -42,16 +42,8 @@ DEV_SERVICE_FORMULAE=(
   redis
 )
 
-ANDROID_FORMULAE=(
-  android-platform-tools
-  gradle
-  kotlin
-  watchman
-)
-
 ANDROID_CASKS=(
   android-studio
-  android-commandlinetools
   temurin
 )
 
@@ -410,7 +402,6 @@ main() {
     brew_install_casks docker
   fi
 
-  brew_install_formulae "${ANDROID_FORMULAE[@]}"
   brew_install_casks "${ANDROID_CASKS[@]}"
 
   configure_git

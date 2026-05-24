@@ -34,7 +34,7 @@ Apps installed after core:
 - NotchNook
 - Arc
 - OrbStack
-- Android Studio and Android tooling, installed last
+- Android Studio and Java, installed last
 
 The script also adds a small managed block to `~/.zshrc` so Homebrew is available in new terminals.
 

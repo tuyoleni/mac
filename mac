@@ -6,12 +6,12 @@ WORKSPACES=("personal" "moodbod" "asmbly")
 BASE="$HOME/.profiles"
 
 setup_workspaces() {
-  log "Setting up workspace system..."
+  echo "Setting up workspace system..."
 
   mkdir -p "$BASE"
 
   for ws in "${WORKSPACES[@]}"; do
-    log "Workspace: $ws"
+    echo "Workspace: $ws"
 
     mkdir -p "$BASE/$ws"/{home,gcloud,ssh,vercel,convex}
 

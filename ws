@@ -508,12 +508,25 @@ cmd_share() {
 
 cmd_init() {
   local sh="${1:-zsh}"
-  cat <<EOF
+  # Put the shims first on PATH exactly once. (Never use ${PATH//dir/}: the
+  # slashes in the directory break the substitution and mangle PATH.)
+  if [[ "$sh" == zsh ]]; then
+    cat <<EOF
 export WS_DIR="$WS_DIR"
-case ":\$PATH:" in *":$SHIMS_DIR:"*) PATH="\${PATH//:$SHIMS_DIR/}"; PATH="\${PATH/#$SHIMS_DIR:/}" ;; esac
-export PATH="$SHIMS_DIR:\$PATH"
+_ws_shims="$SHIMS_DIR"
+path=("\$_ws_shims" \${path:#"\$_ws_shims"})
+typeset -U path PATH
+unset _ws_shims
 EOF
-  if [[ "$sh" == zsh ]]; then echo 'typeset -U path PATH'; fi
+  else
+    cat <<EOF
+export WS_DIR="$WS_DIR"
+_ws_shims="$SHIMS_DIR"; _ws_p=""; _ws_ifs="\$IFS"; IFS=:
+for _ws_d in \$PATH; do [ "\$_ws_d" = "\$_ws_shims" ] || [ -z "\$_ws_d" ] || _ws_p="\${_ws_p:+\$_ws_p:}\$_ws_d"; done
+IFS="\$_ws_ifs"; PATH="\$_ws_shims\${_ws_p:+:\$_ws_p}"; export PATH
+unset _ws_shims _ws_p _ws_ifs _ws_d
+EOF
+  fi
   cat <<'EOF'
 _ws_hook() {
   local d="$PWD" n=""

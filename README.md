@@ -57,9 +57,18 @@ Each step shows `[n/total]`, a spinner and the latest line of output. It ends in
 - SSH key (`IdentitiesOnly`, so keys never leak between accounts)
 - Git author and committer identity (`profile.env`, created once and never overwritten)
 - `gcloud` and `gh` login
-- Private `HOME` used by **Convex** and **Vercel**, which store logins in `~` and have no override. `convex`, `vercel`, `npx convex` and `npx vercel` run under it; nothing else is affected.
+- Private `HOME` for any CLI that keeps its login in `~` with no env override. Those commands run under it (only that command, nothing else is affected). The list lives in `~/.profiles/tools` and is yours to extend:
 
-After setup, in each workspace run `gh auth login` and `npx convex login` once, and add the printed SSH public keys to the matching GitHub accounts. Extra per-workspace exports can go in `~/.profiles/<name>/local.sh`.
+```bash
+ws-tool add <command>   # wrap a new tool, effective immediately
+ws-tool rm <command>
+ws-tool list
+wsrun <command> ...     # one-off: run anything inside the active workspace
+```
+
+  Default list: `convex vercel firebase wrangler supabase netlify railway flyctl stripe heroku aws`. `npx <tool>` follows the same rule, and tools with no global binary (like `convex`) run through `npx`. The list is created once and never overwritten by reruns.
+
+After setup, in each workspace run `gh auth login` and `npx convex login` once, and add the printed SSH public keys to the matching GitHub accounts. Extra per-workspace exports (tools that take an env var instead, e.g. `AWS_PROFILE`) go in `~/.profiles/<name>/local.sh`.
 
 ## What it touches
 

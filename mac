@@ -15,9 +15,9 @@ IFS=$'\n\t'
 # Env:     GIT_USER_NAME, PERSONAL_EMAIL, MOODBOD_EMAIL, ASMBLY_EMAIL
 # Log:     ~/.mac-setup.log
 
-WORKSPACES=(personal moodbod asmbly)
-PROFILES_DIR="$HOME/.profiles"
-SWITCHER="$HOME/workspace-switcher.sh"
+WS_BASE_URL="${WS_BASE_URL:-https://raw.githubusercontent.com/tuyoleni/mac/main}"
+WS_BIN="$HOME/.local/bin/ws"
+WS_SPECS="" # one "name|git name|git email" per line, filled by collect_workspaces
 LOG="$HOME/.mac-setup.log"
 TTY=/dev/tty
 
@@ -38,8 +38,9 @@ ITEMS=(
   "cask|docker|Docker Desktop|0"
   "cask|android-studio|Android Studio (large, installed last)|1"
   "task|git_config|Git defaults (main branch, LFS, ...)|1"
-  "task|workspaces|Workspaces: personal / moodbod / asmbly|1"
-  "task|shell|Shell setup (.zshrc: brew, Android, Java, switcher)|1"
+  "task|workspaces|Workspaces: a folder per account, git and logins switch automatically|1"
+  "task|ai|Tell AI tools about your workspaces (context files + MCP)|1"
+  "task|shell|Shell setup (.zshrc: Homebrew, Android, Java)|1"
   "task|defaults|macOS defaults (key repeat, Finder, Dock)|0"
 )
 SEL=() # parallel to ITEMS: 1 selected, 0 not
@@ -123,7 +124,7 @@ init_selection() {
     kind="$(item_field "$i" 1)"; name="$(item_field "$i" 2)"; def="$(item_field "$i" 4)"
     [[ "$PRESELECT" == *" $name "* ]] && def=1
     if [[ "$ONLY_WORKSPACES" == 1 ]]; then
-      case "$name" in workspaces|shell) def=1 ;; *) def=0 ;; esac
+      case "$name" in workspaces|shell|ai) def=1 ;; *) def=0 ;; esac
     fi
     # Already-installed things start unticked: nothing to do.
     if [[ "$def" == 1 ]] && is_installed "$kind" "$name"; then def=0; fi
@@ -240,7 +241,7 @@ page_review() {
 }
 
 wizard() {
-  local step=1 ws need=0
+  local step=1
   while true; do
     case "$step" in
       1) page_welcome; if [[ "$MODE" == list ]]; then step=20; else step=2; fi ;;
@@ -248,12 +249,8 @@ wizard() {
             step=21
           else step=1; fi ;;
       21) if [[ "${SEL[$(index_of workspaces)]}" == 1 ]]; then
-            need=0
-            for ws in "${WORKSPACES[@]}"; do [[ -f "$PROFILES_DIR/$ws/profile.env" ]] || need=1; done
-            if [[ "$need" == 1 ]]; then
-              header 2 "Your details" "Used for git commits in each workspace. Press enter to skip any."
-              collect_identities
-            fi
+            header 2 "Your workspaces" "One folder per account. Press enter to accept a suggestion."
+            collect_workspaces
           fi
           step=22 ;;
       22) if page_review; then break; else step=20; fi ;;
@@ -261,11 +258,8 @@ wizard() {
       3) if page 3 "Apps" "Installed with Homebrew. Android Studio goes last, it is large." cask "Continue"; then step=4; else step=2; fi ;;
       4) if page 4 "Setup" "Git defaults, your workspaces, and your shell." task "Continue"; then
            if [[ "${SEL[$(index_of workspaces)]}" == 1 ]]; then
-             for ws in "${WORKSPACES[@]}"; do [[ -f "$PROFILES_DIR/$ws/profile.env" ]] && continue; need=1; done
-             if [[ "$need" == 1 ]]; then
-               header 4 "Your details" "Used for git commits in each workspace. Press enter to skip any."
-               collect_identities
-             fi
+             header 4 "Your workspaces" "One folder per account. Press enter to accept a suggestion."
+             collect_workspaces
            fi
            step=5
          else step=3; fi ;;
@@ -294,21 +288,19 @@ ask() { # ask <prompt> <default>  -> echoes answer
   printf '%s' "${ans:-$2}"
 }
 
-collect_identities() {
-  local ws upper email name need=0
-  for ws in "${WORKSPACES[@]}"; do
-    [[ -f "$PROFILES_DIR/$ws/profile.env" ]] || need=1
-  done
-  [[ "$need" == 1 ]] || return 0
-  name="$(ask "Your name:" "${GIT_USER_NAME:-}")"
-  for ws in "${WORKSPACES[@]}"; do
-    [[ -f "$PROFILES_DIR/$ws/profile.env" ]] && continue
-    upper="$(printf '%s' "$ws" | tr '[:lower:]' '[:upper:]')"
+collect_workspaces() {
+  local names n upper email gname existing=""
+  [[ -x "$WS_BIN" ]] && existing="$("$WS_BIN" list 2>/dev/null | cut -f1 | tr '\n' ',' | sed 's/,$//')"
+  names="${WS_NAMES:-}"
+  [[ -n "$names" ]] || names="$(ask "Workspace names, comma separated:" "${existing:-personal}")"
+  names="$(printf '%s' "$names" | tr ', ' '\n\n' | sed '/^$/d' | tr '[:upper:]' '[:lower:]')"
+  gname="$(ask "Your name for git commits:" "${GIT_USER_NAME:-$(git config --global user.name 2>/dev/null || true)}")"
+  WS_SPECS=""
+  for n in $names; do
+    upper="$(printf '%s' "$n" | tr '[:lower:]-' '[:upper:]_')"
     eval "email=\"\${${upper}_EMAIL:-}\""
-    email="$(ask "Email for $ws:" "$email")"
-    [[ "$DEMO" == 1 ]] && continue
-    mkdir -p "$PROFILES_DIR/$ws"
-    printf 'WS_NAME="%s"\nWS_EMAIL="%s"\n' "$name" "$email" > "$PROFILES_DIR/$ws/profile.env"
+    email="$(ask "Git email for $n:" "$email")"
+    WS_SPECS="${WS_SPECS}${n}|${gname}|${email}"$'\n'
   done
   printf '\n'
 }
@@ -474,7 +466,6 @@ elif [[ -x /usr/libexec/java_home ]] && _jh="$(/usr/libexec/java_home 2>/dev/nul
 fi
 unset _jh
 
-[[ -f "$HOME/workspace-switcher.sh" ]] && source "$HOME/workspace-switcher.sh"
 EOF
 }
 
@@ -489,176 +480,35 @@ act_shell() {
   echo "updated $zshrc"
 }
 
-# Each workspace gets its own ssh key, gcloud + gh config, git identity, and a
-# private HOME that Convex/Vercel run under (they keep logins in ~, no override).
+# Install ws (the workspace tool) from this checkout if present, else download it.
+ensure_ws() {
+  local here
+  mkdir -p "$HOME/.local/bin"
+  here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+  if [[ -f "$here/ws" && -f "$here/ws-mcp.py" ]]; then
+    cp "$here/ws" "$WS_BIN"; cp "$here/ws-mcp.py" "$HOME/.local/bin/ws-mcp.py"
+  else
+    retry 3 curl -fsSL "$WS_BASE_URL/ws" -o "$WS_BIN"
+    retry 3 curl -fsSL "$WS_BASE_URL/ws-mcp.py" -o "$HOME/.local/bin/ws-mcp.py"
+  fi
+  chmod +x "$WS_BIN" "$HOME/.local/bin/ws-mcp.py"
+}
+
 act_workspaces() {
-  local ws dir
-  for ws in "${WORKSPACES[@]}"; do
-    dir="$PROFILES_DIR/$ws"
-    mkdir -p "$dir"/{home,gcloud,ssh,gh}
-    chmod 700 "$dir/ssh"
-    [[ -f "$dir/profile.env" ]] || printf 'WS_NAME=""\nWS_EMAIL=""\n' > "$dir/profile.env"
-    if [[ ! -f "$dir/ssh/id_ed25519" ]]; then
-      ssh-keygen -t ed25519 -C "$ws@$(hostname -s)" -f "$dir/ssh/id_ed25519" -N "" >/dev/null
-      echo "generated ssh key for $ws"
-    fi
-  done
-
-  if [[ ! -f "$PROFILES_DIR/tools" ]]; then
-    cat > "$PROFILES_DIR/tools" <<'EOF'
-# CLIs that store their login in ~ and so run under the workspace HOME.
-# Edit freely, or use: ws-tool add <command>
-convex
-vercel
-firebase
-wrangler
-supabase
-netlify
-railway
-flyctl
-stripe
-heroku
-aws
-EOF
-  fi
-
-  if [[ ! -f "$PROFILES_DIR/shared" ]]; then
-    cat > "$PROFILES_DIR/shared" <<'EOF'
-# Files from your real ~ that every workspace home links to, so wrapped tools
-# still see your shared config (but never your logins). Paths relative to ~.
-# Edit freely, or use: ws-share <path>
-.gitconfig
-.gitignore_global
-.npmrc
-.yarnrc
-.editorconfig
-.ssh/known_hosts
-EOF
-  fi
-
-  cat > "$SWITCHER" <<'EOF'
-# Generated by https://github.com/tuyoleni/mac -- edit ~/.profiles/<ws>/profile.env instead.
-PROFILES_DIR="$HOME/.profiles"
-
-# Link shared dotfiles (see ~/.profiles/shared) into a workspace home.
-_ws_link_shared() {
-  local dir="$1" f
-  [[ -f "$PROFILES_DIR/shared" ]] || return 0
-  while IFS= read -r f; do
-    [[ -z "$f" || "$f" == \#* ]] && continue
-    [[ -e "$HOME/$f" || -L "$HOME/$f" ]] || continue
-    [[ -e "$dir/home/$f" || -L "$dir/home/$f" ]] && continue
-    mkdir -p "$(dirname "$dir/home/$f")" && ln -s "$HOME/$f" "$dir/home/$f"
-  done < "$PROFILES_DIR/shared"
+  local n g e
+  ensure_ws
+  [[ -n "$WS_SPECS" ]] || { echo "no workspaces chosen"; return 0; }
+  while IFS='|' read -r n g e; do
+    [[ -n "$n" ]] || continue
+    "$WS_BIN" add "$n" --git-name "$g" --git-email "$e" || return 1
+  done <<< "$WS_SPECS"
+  "$WS_BIN" setup-shell
 }
 
-ws-share() { # ws-share <path relative to ~>
-  [[ -n "$1" ]] || { echo "usage: ws-share <path relative to ~>" >&2; return 1; }
-  grep -qx -- "$1" "$PROFILES_DIR/shared" 2>/dev/null || echo "$1" >> "$PROFILES_DIR/shared"
-  [[ -n "${PROFILE_NAME:-}" ]] && _ws_link_shared "$PROFILES_DIR/$PROFILE_NAME"
-  echo "shared: $1"
-}
-
-switch_workspace() {
-  local ws="$1" dir="$PROFILES_DIR/$1" WS_NAME="" WS_EMAIL=""
-  [[ -d "$dir" ]] || { echo "Unknown workspace: $ws" >&2; return 1; }
-  [[ -f "$dir/profile.env" ]] && source "$dir/profile.env"
-
-  export PROFILE_NAME="$ws"
-  export WORKSPACE_HOME="$dir/home"
-  _ws_link_shared "$dir"
-
-  export CLOUDSDK_CONFIG="$dir/gcloud"
-  export GH_CONFIG_DIR="$dir/gh"
-  export GIT_SSH_COMMAND="ssh -i $dir/ssh/id_ed25519 -o IdentitiesOnly=yes"
-
-  if [[ -n "$WS_NAME" ]]; then
-    export GIT_AUTHOR_NAME="$WS_NAME" GIT_COMMITTER_NAME="$WS_NAME"
-  else
-    unset GIT_AUTHOR_NAME GIT_COMMITTER_NAME
-  fi
-  if [[ -n "$WS_EMAIL" ]]; then
-    export GIT_AUTHOR_EMAIL="$WS_EMAIL" GIT_COMMITTER_EMAIL="$WS_EMAIL"
-  else
-    unset GIT_AUTHOR_EMAIL GIT_COMMITTER_EMAIL
-  fi
-
-  [[ -f "$dir/local.sh" ]] && source "$dir/local.sh"   # optional extra exports
-
-  : "${_WS_BASE_PS1:=$PS1}"
-  PS1="($ws) $_WS_BASE_PS1"
-  echo "Switched to $ws"
-}
-
-# Run a command with the workspace's private HOME (only that command).
-_in_workspace() {
-  if [[ -z "${WORKSPACE_HOME:-}" ]]; then
-    echo "No workspace active. Run: personal | moodbod | asmbly" >&2
-    return 1
-  fi
-  local cache="${npm_config_cache:-$HOME/.npm}"
-  HOME="$WORKSPACE_HOME" npm_config_cache="$cache" command "$@"
-}
-
-# Tools that keep their login in ~ (no env override) are listed in
-# ~/.profiles/tools, one per line, and run under the workspace HOME.
-# Manage the list with:  ws-tool add <name> | rm <name> | list
-_ws_tools_file="$PROFILES_DIR/tools"
-
-# A listed tool uses its real binary if one exists, else runs through npx
-# (e.g. convex). Only listed tools get the npx fallback.
-_ws_run_tool() {
-  local t="$1"; shift
-  if ( unset -f "$t" 2>/dev/null; command -v "$t" >/dev/null 2>&1 ); then
-    _in_workspace "$t" "$@"
-  else
-    _in_workspace npx "$t" "$@"
-  fi
-}
-
-_ws_define_tool() {
-  eval "$1() { _ws_run_tool $1 \"\$@\"; }"
-}
-
-_ws_is_tool() { [[ -f "$_ws_tools_file" ]] && grep -qx -- "$1" "$_ws_tools_file"; }
-
-_ws_load_tools() {
-  local t
-  [[ -f "$_ws_tools_file" ]] || return 0
-  while IFS= read -r t; do
-    [[ -n "$t" && "$t" != \#* ]] && _ws_define_tool "$t"
-  done < "$_ws_tools_file"
-}
-
-ws-tool() {
-  case "$1" in
-    add)
-      [[ -n "$2" ]] || { echo "usage: ws-tool add <command>" >&2; return 1; }
-      _ws_is_tool "$2" || echo "$2" >> "$_ws_tools_file"
-      _ws_define_tool "$2"; echo "$2 now runs inside the active workspace" ;;
-    rm)
-      [[ -n "$2" ]] || { echo "usage: ws-tool rm <command>" >&2; return 1; }
-      grep -vx -- "$2" "$_ws_tools_file" > "$_ws_tools_file.tmp"; mv "$_ws_tools_file.tmp" "$_ws_tools_file"
-      unset -f "$2" 2>/dev/null; echo "removed $2 (open a new shell to be sure)" ;;
-    list|"") grep -v '^#' "$_ws_tools_file" ;;
-    *) echo "usage: ws-tool add|rm|list [command]" >&2; return 1 ;;
-  esac
-}
-
-# One-off: run any command inside the active workspace's private HOME.
-wsrun() { _in_workspace "$@"; }
-
-# npx runs its package under the workspace HOME when it is a listed tool.
-npx() {
-  if _ws_is_tool "$1"; then _in_workspace npx "$@"; else command npx "$@"; fi
-}
-
-_ws_load_tools
-
-alias personal='switch_workspace personal'
-alias moodbod='switch_workspace moodbod'
-alias asmbly='switch_workspace asmbly'
-EOF
+act_ai() {
+  ensure_ws
+  "$WS_BIN" ai
+  "$WS_BIN" mcp-register
 }
 
 # ---------- main ----------
@@ -692,6 +542,7 @@ main() {
         case "$name" in
           git_config) PLAN_LABELS+=("$label"); PLAN_CMDS+=("act_git_config") ;;
           workspaces) PLAN_LABELS+=("$label"); PLAN_CMDS+=("act_workspaces") ;;
+          ai)         PLAN_LABELS+=("$label"); PLAN_CMDS+=("act_ai") ;;
           shell)      PLAN_LABELS+=("$label"); PLAN_CMDS+=("act_shell") ;;
           defaults)   PLAN_LABELS+=("$label"); PLAN_CMDS+=("act_defaults") ;;
         esac ;;
@@ -709,7 +560,7 @@ main() {
 
   # Anything that needs typing happens up front, before the progress screen.
   for i in "${!PLAN_CMDS[@]}"; do
-    [[ "$DEMO" != 1 && "${PLAN_CMDS[$i]}" == act_workspaces ]] && collect_identities
+    [[ "${PLAN_CMDS[$i]}" == act_workspaces && -z "$WS_SPECS" ]] && collect_workspaces
   done
   if [[ "$need_sudo" == 1 || "$need_brew" == 1 ]]; then
     printf '%sAdministrator password%s (casks and Homebrew need it)\n' "$B" "$R"
@@ -738,11 +589,12 @@ main() {
     printf '%sFailed (rerun to retry, details in %s):%s\n' "$YEL" "$LOG" "$R"
     printf '  - %s\n' "${FAILS[@]}"
   fi
-  printf '\nNext:\n  - open a new terminal\n  - run %spersonal%s / %smoodbod%s / %sasmbly%s, then %sgh auth login%s and %snpx convex login%s in each\n' "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
-  if [[ -d "$PROFILES_DIR" ]]; then
-    printf '  - add these SSH public keys to the matching GitHub accounts:\n'
-    for name in "${WORKSPACES[@]}"; do
-      [[ -f "$PROFILES_DIR/$name/ssh/id_ed25519.pub" ]] && printf '      %-9s %s\n' "$name" "$PROFILES_DIR/$name/ssh/id_ed25519.pub"
+  printf '\nNext:\n  - open a new terminal\n'
+  if [[ -x "$WS_BIN" ]]; then
+    printf '  - cd into a workspace folder and run %sgh auth login%s there (once per workspace)\n' "$B" "$R"
+    printf '  - add these SSH keys to the matching GitHub accounts:\n'
+    "$WS_BIN" list 2>/dev/null | cut -f1 | while read -r wsn; do
+      printf '      %-10s %s\n' "$wsn" "$HOME/.profiles/$wsn/ssh/id_ed25519.pub"
     done
   fi
   printf '\n'

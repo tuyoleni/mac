@@ -508,7 +508,7 @@ _ws_prompt() {
   : "${_WS_BASE_PS1:=$PS1}"
   if [[ -n "${WS_WORKSPACE:-}" ]]; then PS1="($WS_WORKSPACE) $_WS_BASE_PS1"; else PS1="$_WS_BASE_PS1"; fi
 }
-# `<name>` jumps to a workspace folder: e.g. `asmbly`
+# `<name>` jumps to a workspace folder: e.g. `work`
 ws_go() { local r; r="$(cat "$WS_DIR/$1/root" 2>/dev/null)" && cd "$r"; }
 EOF
   if [[ "$sh" == zsh ]]; then

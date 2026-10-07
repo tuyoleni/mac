@@ -341,6 +341,10 @@ cmd_exec() {
   # run the real binary even if a shim shadows it
   local real; real="$(find_real "$1" || true)"
   if [[ -n "$real" ]]; then shift; exec "$real" "$@"; fi
+  if in_tools "$1"; then  # e.g. convex/vercel with no global install: run through npx
+    local npxr; npxr="$(find_real npx || true)"
+    [[ -n "$npxr" ]] && exec "$npxr" "$@"
+  fi
   exec "$@"
 }
 
@@ -413,7 +417,9 @@ nested folders) automatically uses this workspace's GitHub account, SSH key, git
 identity and CLI logins (gh, gcloud, convex, vercel, ...). It is resolved from
 the folder, so moving a project into another workspace folder changes it.
 
+- Run \`git\`, \`gh\`, \`gcloud\`, \`vercel\`, \`convex\` etc. normally: they pick this workspace's account by themselves.
 - Do not run \`gh auth switch\` / \`gh auth login\`, or change git \`user.*\`; it is already correct here.
+- Check once per session: \`command -v gh\` should be under \`~/.profiles/shims\`. If it is not, run account-bound commands as \`ws exec -- <command>\`.
 - Check with \`ws which\`. See logins with \`ws status\`.
 - Act as another workspace only when asked: \`ws exec -w <name> -- <command>\`.
 - If a login is missing, tell the user to run that login inside this folder.
@@ -430,8 +436,10 @@ ai_text_global() {
 The user works in folder-based workspaces managed by the \`ws\` command. A
 project's workspace is decided by which workspace folder it sits in, and git
 identity, SSH key, gh, gcloud, convex and vercel logins follow it automatically.
-Never run \`gh auth switch\` or edit git \`user.*\` to change accounts.
-Run \`ws which\` to see the current workspace and \`ws status\` for login state.
+Run git, gh, gcloud, vercel and convex normally; they pick the right account by
+themselves. Never run \`gh auth switch\` or edit git \`user.*\` to change accounts.
+If \`command -v gh\` is not under ~/.profiles/shims, run account-bound commands as
+\`ws exec -- <command>\`. Run \`ws which\` to see the current workspace and \`ws status\` for login state.
 Workspaces:$list
 EOF
 }

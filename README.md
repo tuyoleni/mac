@@ -50,6 +50,12 @@ Selecting any brew package automatically adds the Xcode Command Line Tools and H
 
 Each step shows `[n/total]`, a spinner and the latest line of output. It ends in `✓` with the time taken, or `✗` with the last lines of the error. A failed step never stops the rest; failures are listed at the end and rerunning retries only what's missing. The full log is at `~/.mac-setup.log`.
 
+## Order and flaky downloads
+
+Homebrew always goes first: Command Line Tools, then Homebrew (with an update), then your packages, with Android Studio last. If Homebrew itself fails, brew installs are skipped with a clear message instead of failing one by one.
+
+Big downloads are the usual cause of git errors like `RPC failed`, `early EOF` or `HTTP/2 stream not closed cleanly`. The script runs with git on HTTP/1.1, a large post buffer and no low-speed timeout (set through environment variables for the run only, never written to `~/.gitconfig`), and every Homebrew and package download is retried up to 3 times with backoff. If something still fails, rerun the script: it only does what's missing.
+
 ## Workspaces
 
 `personal`, `moodbod` and `asmbly` are shell aliases that switch the whole environment. Each workspace in `~/.profiles/<name>/` has its own:

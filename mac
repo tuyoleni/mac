@@ -350,6 +350,34 @@ run_step() { # run_step <label> <command...>
 
 # ---------- actions (run inside run_step subshells) ----------
 
+# Large clones/downloads (Homebrew, homebrew-core, big casks) often die with
+# "RPC failed", "early EOF" or "HTTP/2 stream not closed cleanly". Use HTTP/1.1,
+# a big buffer and no low-speed abort, scoped to this script via env (nothing
+# is written to ~/.gitconfig).
+harden_network() {
+  export GIT_CONFIG_COUNT=4
+  export GIT_CONFIG_KEY_0=http.version        GIT_CONFIG_VALUE_0=HTTP/1.1
+  export GIT_CONFIG_KEY_1=http.postBuffer     GIT_CONFIG_VALUE_1=1048576000
+  export GIT_CONFIG_KEY_2=http.lowSpeedLimit  GIT_CONFIG_VALUE_2=0
+  export GIT_CONFIG_KEY_3=http.lowSpeedTime   GIT_CONFIG_VALUE_3=999999
+  export HOMEBREW_CURL_RETRIES=5
+  export HOMEBREW_NO_ANALYTICS=1
+  export HOMEBREW_NO_ENV_HINTS=1
+}
+
+# retry <attempts> <command...>: rerun a flaky download with growing backoff.
+retry() {
+  local tries="$1" n=1 rc=0
+  shift
+  while true; do
+    rc=0; "$@" || rc=$?
+    [[ "$rc" -eq 0 ]] && return 0
+    [[ "$n" -ge "$tries" ]] && { echo "gave up after $n attempts"; return "$rc"; }
+    echo "attempt $n failed (exit $rc), retrying in $((n * 5))s..."
+    sleep $((n * 5)); n=$((n + 1))
+  done
+}
+
 load_brew() {
   if   [[ -x /opt/homebrew/bin/brew ]]; then eval "$(/opt/homebrew/bin/brew shellenv)"
   elif [[ -x /usr/local/bin/brew ]];    then eval "$(/usr/local/bin/brew shellenv)"
@@ -366,17 +394,20 @@ act_clt() {
 act_homebrew() {
   load_brew
   if have brew; then echo "already installed"; else
-    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    NONINTERACTIVE=1 retry 3 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     load_brew
   fi
-  have brew || { echo "brew not on PATH"; return 1; }
+  have brew || { echo "Homebrew install failed, nothing else can install"; return 1; }
   brew analytics off || true
-  brew update
+  retry 3 brew update
 }
 
 act_brew() { # kind name
   load_brew
-  if [[ "$1" == cask ]]; then brew install --cask "$2"; else brew install "$2"; fi
+  have brew || { echo "Homebrew is missing (its step failed), skipping $2"; return 1; }
+  # Updated once in the Homebrew step; don't redo it or clean up per package.
+  export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+  if [[ "$1" == cask ]]; then retry 3 brew install --cask "$2"; else retry 3 brew install "$2"; fi
 }
 
 act_git_config() {
@@ -634,6 +665,7 @@ EOF
 
 main() {
   parse_args "$@"
+  harden_network
   [[ "$(uname -s)" == Darwin ]] || die "macOS only."
 
   if [[ -r "$TTY" && -t 1 && "$YES" != 1 ]]; then INTERACTIVE=1; fi

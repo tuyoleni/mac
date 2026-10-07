@@ -68,6 +68,8 @@ wsrun <command> ...     # one-off: run anything inside the active workspace
 
   Default list: `convex vercel firebase wrangler supabase netlify railway flyctl stripe heroku aws`. `npx <tool>` follows the same rule, and tools with no global binary (like `convex`) run through `npx`. The list is created once and never overwritten by reruns.
 
+- Shared config: each workspace home links to the files in `~/.profiles/shared` (default `.gitconfig`, `.gitignore_global`, `.npmrc`, `.yarnrc`, `.editorconfig`, `.ssh/known_hosts`), so wrapped tools behave normally. Logins and private keys are never shared. Add more with `ws-share <path relative to ~>`.
+
 After setup, in each workspace run `gh auth login` and `npx convex login` once, and add the printed SSH public keys to the matching GitHub accounts. Extra per-workspace exports (tools that take an env var instead, e.g. `AWS_PROFILE`) go in `~/.profiles/<name>/local.sh`.
 
 ## What it touches

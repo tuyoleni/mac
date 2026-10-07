@@ -12,12 +12,12 @@ IFS=$'\n\t'
 #          full         also preselect postgres + redis
 #          docker       also preselect Docker Desktop
 #          workspaces   only the workspace system
-# Env:     GIT_USER_NAME, PERSONAL_EMAIL, MOODBOD_EMAIL, ASMBLY_EMAIL
+# Env:     WS_NAMES="work personal"   workspace names (skips the question)
 # Log:     ~/.mac-setup.log
 
 WS_BASE_URL="${WS_BASE_URL:-https://raw.githubusercontent.com/tuyoleni/mac/main}"
 WS_BIN="$HOME/.local/bin/ws"
-WS_SPECS="" # one "name|git name|git email" per line, filled by collect_workspaces
+WS_SPECS="" # workspace names, one per line, filled by collect_workspaces
 LOG="$HOME/.mac-setup.log"
 TTY=/dev/tty
 
@@ -289,19 +289,13 @@ ask() { # ask <prompt> <default>  -> echoes answer
 }
 
 collect_workspaces() {
-  local names n upper email gname existing=""
+  local names n existing=""
   [[ -x "$WS_BIN" ]] && existing="$("$WS_BIN" list 2>/dev/null | cut -f1 | tr '\n' ',' | sed 's/,$//')"
   names="${WS_NAMES:-}"
   [[ -n "$names" ]] || names="$(ask "Workspace names, comma separated:" "${existing:-personal}")"
   names="$(printf '%s' "$names" | tr ', ' '\n\n' | sed '/^$/d' | tr '[:upper:]' '[:lower:]')"
-  gname="$(ask "Your name for git commits:" "${GIT_USER_NAME:-$(git config --global user.name 2>/dev/null || true)}")"
   WS_SPECS=""
-  for n in $names; do
-    upper="$(printf '%s' "$n" | tr '[:lower:]-' '[:upper:]_')"
-    eval "email=\"\${${upper}_EMAIL:-}\""
-    email="$(ask "Git email for $n:" "$email")"
-    WS_SPECS="${WS_SPECS}${n}|${gname}|${email}"$'\n'
-  done
+  for n in $names; do WS_SPECS="${WS_SPECS}${n}"$'\n'; done
   printf '\n'
 }
 
@@ -495,12 +489,12 @@ ensure_ws() {
 }
 
 act_workspaces() {
-  local n g e
+  local n
   ensure_ws
   [[ -n "$WS_SPECS" ]] || { echo "no workspaces chosen"; return 0; }
-  while IFS='|' read -r n g e; do
+  while IFS= read -r n; do
     [[ -n "$n" ]] || continue
-    "$WS_BIN" add "$n" --git-name "$g" --git-email "$e" || return 1
+    "$WS_BIN" add "$n" --no-login || return 1
   done <<< "$WS_SPECS"
   "$WS_BIN" setup-shell
 }
@@ -591,11 +585,8 @@ main() {
   fi
   printf '\nNext:\n  - open a new terminal\n'
   if [[ -x "$WS_BIN" ]]; then
-    printf '  - cd into a workspace folder and run %sgh auth login%s there (once per workspace)\n' "$B" "$R"
-    printf '  - add these SSH keys to the matching GitHub accounts:\n'
-    "$WS_BIN" list 2>/dev/null | cut -f1 | while read -r wsn; do
-      printf '      %-10s %s\n' "$wsn" "$HOME/.profiles/$wsn/ssh/id_ed25519.pub"
-    done
+    printf '  - sign in to GitHub for each workspace: %sws login <name>%s\n' "$B" "$R"
+    "$WS_BIN" list 2>/dev/null | cut -f1 | while read -r wsn; do printf '      ws login %s\n' "$wsn"; done
   fi
   printf '\n'
 }

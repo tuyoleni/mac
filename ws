@@ -3,6 +3,7 @@
 # (git identity + SSH key, gh, gcloud, Convex, Vercel, ...) every tool uses.
 #
 #   ws add <name> [--dir <path>]   create a workspace (+ its folder under the root)
+#   ws login [name]                sign in to GitHub for a workspace (sets git identity)
 #   ws list | status | doctor      overview, login state, health checks
 #   ws which [path]                which workspace owns a path
 #   ws exec [-w name] -- cmd...    run a command inside a workspace
@@ -225,17 +226,16 @@ find_dir_ci() { # existing dir under WS_ROOT matching name case-insensitively
 }
 
 cmd_add() {
-  local name="" dir="" gname="" gemail="" a
+  local name="" dir="" login=1 ans
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dir) dir="$2"; shift 2 ;;
-      --git-name) gname="$2"; shift 2 ;;
-      --git-email) gemail="$2"; shift 2 ;;
+      --no-login) login=0; shift ;;
       -*) die "add: unknown option $1" ;;
       *) name="$1"; shift ;;
     esac
   done
-  [[ -n "$name" ]] || die "usage: ws add <name> [--dir path] [--git-name N] [--git-email E]"
+  [[ -n "$name" ]] || die "usage: ws add <name> [--dir path] [--no-login]"
   valid_name "$name" || die "name must be lowercase letters, digits, - or _"
   ensure_lists
 
@@ -250,20 +250,8 @@ cmd_add() {
   chmod 700 "$d/ssh"
   printf '%s\n' "$dir" > "$d/root"
   printf 'name=%s\n' "$name" > "$dir/.workspace"
-
-  if [[ ! -f "$d/profile.env" ]]; then
-    [[ -n "$gname" ]]  || gname="$(ask "Git name for $name:" "$(git config --global user.name 2>/dev/null || true)")"
-    [[ -n "$gemail" ]] || gemail="$(ask "Git email for $name:" "")"
-    printf 'WS_NAME="%s"\nWS_EMAIL="%s"\n' "$gname" "$gemail" > "$d/profile.env"
-  fi
-  # An adopted profile may have no email yet: without one, commits silently
-  # use the global identity, so ask (interactive only; doctor flags it otherwise).
-  if [[ -z "$(ws_field "$name" WS_EMAIL)" ]] && is_tty; then
-    gname="$(ws_field "$name" WS_NAME)"
-    [[ -n "$gname" ]] || gname="$(ask "Git name for $name:" "$(git config --global user.name 2>/dev/null || true)")"
-    gemail="$(ask "Git email for $name (blank = use global):" "")"
-    printf 'WS_NAME="%s"\nWS_EMAIL="%s"\n' "$gname" "$gemail" > "$d/profile.env"
-  fi
+  # git name/email are filled in from the GitHub account by `ws login`
+  [[ -f "$d/profile.env" ]] || printf 'WS_NAME=""\nWS_EMAIL=""\n' > "$d/profile.env"
   if [[ ! -f "$d/ssh/id_ed25519" ]]; then
     ssh-keygen -t ed25519 -C "$name@$(hostname -s)" -f "$d/ssh/id_ed25519" -N "" >/dev/null 2>&1 \
       || warn "could not generate an SSH key"
@@ -273,11 +261,40 @@ cmd_add() {
   git_link "$name"
   link_shared "$name"
   cmd_shims
-  echo "workspace '$name' -> $dir"
-  echo "  public SSH key: $d/ssh/id_ed25519.pub"
-  echo "  next: cd \"$dir\" && gh auth login"
   ws_ai_write "$name"
+  echo "workspace '$name' -> $dir"
+
+  if [[ "$login" == 1 && -t 0 && -t 1 && -z "$(login_gh "$name")" ]]; then
+    ans="$(ask "Sign in to GitHub for '$name' now? [Y/n]" "")"
+    case "$ans" in ""|[Yy]*) cmd_login "$name" ;; *) echo "  later: ws login $name" ;; esac
+  elif [[ -z "$(login_gh "$name")" ]]; then
+    echo "  next: ws login $name"
+  fi
   return 0
+}
+
+# Sign this workspace in to GitHub in the browser. The git name/email come
+# from the account, so nothing has to be typed.
+cmd_login() {
+  local n="${1:-}" real login name id email
+  [[ -n "$n" ]] || n="$(resolve "$PWD")" || n=""
+  [[ -n "$n" ]] || die "usage: ws login <workspace>"
+  ws_exists "$n" || die "no such workspace: $n"
+  real="$(find_real gh)" || die "GitHub CLI (gh) is not installed: brew install gh"
+  export_env "$n"
+  "$real" auth login --hostname github.com --git-protocol https --web --scopes admin:public_key \
+    || die "sign-in did not finish"
+  login="$("$real" api user -q .login 2>/dev/null)"
+  [[ -n "$login" ]] || die "signed in, but could not read the account"
+  name="$("$real" api user -q '.name // .login' 2>/dev/null)"
+  id="$("$real" api user -q .id 2>/dev/null)"
+  name="${name//\"/}"
+  email="${id}+${login}@users.noreply.github.com"
+  printf 'WS_NAME="%s"\nWS_EMAIL="%s"\n' "$name" "$email" > "$WS_DIR/$n/profile.env"
+  gen_gitconfig "$n"
+  # best effort: register this workspace's SSH key with the account
+  "$real" ssh-key add "$WS_DIR/$n/ssh/id_ed25519.pub" --title "ws $n ($(hostname -s))" >/dev/null 2>&1 || true
+  echo "workspace '$n' is signed in as $login (commits as $name)"
 }
 
 cmd_rm() {
@@ -363,7 +380,7 @@ cmd_doctor() {
     [[ -d "$root" ]] && chk ok "folder $root" || chk fail "folder missing: $root"
     [[ -f "$root/.workspace" ]] && chk ok "marker present" || chk fail "marker missing in $root (ws add $n --dir \"$root\")"
     [[ -f "$WS_DIR/$n/ssh/id_ed25519" ]] && chk ok "ssh key" || chk fail "ssh key missing"
-    [[ -n "$(ws_field "$n" WS_EMAIL)" ]] && chk ok "git email $(ws_field "$n" WS_EMAIL)" || chk fail "no git email (edit $WS_DIR/$n/profile.env, then ws add $n)"
+    [[ -n "$(login_gh "$n")" ]] && chk ok "signed in to GitHub as $(login_gh "$n")" || chk fail "not signed in to GitHub: run ws login $n"
     [[ "$(git config --global --get "includeIf.gitdir/i:$root/.path" 2>/dev/null)" == "$WS_DIR/$n/gitconfig" ]] \
       && chk ok "git includeIf linked" || chk fail "git includeIf not linked (run: ws add $n)"
   done
@@ -604,6 +621,7 @@ main() {
     init) cmd_init "$@" ;;
     setup-shell) cmd_setup_shell ;;
     migrate) cmd_migrate ;;
+    login) cmd_login "$@" ;;
     ai) cmd_ai ;;
     mcp-register) cmd_mcp_register ;;
     version|--version) echo "ws $WS_VERSION" ;;

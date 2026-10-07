@@ -275,7 +275,7 @@ cmd_add() {
   echo "workspace '$name' -> $dir"
   echo "  public SSH key: $d/ssh/id_ed25519.pub"
   echo "  next: cd \"$dir\" && gh auth login"
-  a="$(command -v ws_ai_write 2>/dev/null || true)"; [[ -n "$a" ]] && ws_ai_write "$name"
+  ws_ai_write "$name"
   return 0
 }
 
@@ -367,6 +367,93 @@ cmd_doctor() {
       && chk ok "git includeIf linked" || chk fail "git includeIf not linked (run: ws add $n)"
   done
   return "$bad"
+}
+
+# ---------- AI awareness ----------
+# Agents (Claude Code, Codex, Gemini CLI, ...) read instruction files from the
+# folders they work in and from their own global files. We keep a small managed
+# block in each so nobody has to explain the workspaces again.
+
+AI_S="<!-- ws:begin (managed by ws, edits inside are overwritten) -->"
+AI_E="<!-- ws:end -->"
+
+ai_text_workspace() { # ai_text_workspace <name>
+  cat <<EOF
+## Workspace: $1
+
+This folder belongs to the **$1** workspace. Everything inside it (including
+nested folders) automatically uses this workspace's GitHub account, SSH key, git
+identity and CLI logins (gh, gcloud, convex, vercel, ...). It is resolved from
+the folder, so moving a project into another workspace folder changes it.
+
+- Do not run \`gh auth switch\` / \`gh auth login\`, or change git \`user.*\`; it is already correct here.
+- Check with \`ws which\`. See logins with \`ws status\`.
+- Act as another workspace only when asked: \`ws exec -w <name> -- <command>\`.
+- If a login is missing, tell the user to run that login inside this folder.
+EOF
+}
+
+ai_text_global() {
+  local n list=""
+  for n in $(ws_names); do list="$list
+- \`$n\`: $(ws_root "$n")"; done
+  cat <<EOF
+## Workspaces
+
+The user works in folder-based workspaces managed by the \`ws\` command. A
+project's workspace is decided by which workspace folder it sits in, and git
+identity, SSH key, gh, gcloud, convex and vercel logins follow it automatically.
+Never run \`gh auth switch\` or edit git \`user.*\` to change accounts.
+Run \`ws which\` to see the current workspace and \`ws status\` for login state.
+Workspaces:$list
+EOF
+}
+
+ai_write_file() { # ai_write_file <file> <text> [append=0|1]
+  mkdir -p "$(dirname "$1")"
+  block_set "$1" "$AI_S" "$AI_E" "$2" "${3:-0}"
+}
+
+ws_ai_write() { # per-workspace context files in the workspace root
+  local root f; root="$(ws_root "$1")"
+  [[ -d "$root" ]] || return 0
+  for f in CLAUDE.md AGENTS.md GEMINI.md; do ai_write_file "$root/$f" "$(ai_text_workspace "$1")" 0; done
+}
+
+cmd_ai() {
+  local n g
+  for n in $(ws_names); do ws_ai_write "$n"; done
+  # global files, only for tools that are installed (their config folder exists)
+  g="$(ai_text_global)"
+  [[ -d "$REAL_HOME/.claude" ]] && ai_write_file "$REAL_HOME/.claude/CLAUDE.md" "$g" 1
+  [[ -d "$REAL_HOME/.codex"  ]] && ai_write_file "$REAL_HOME/.codex/AGENTS.md" "$g" 1
+  [[ -d "$REAL_HOME/.gemini" ]] && ai_write_file "$REAL_HOME/.gemini/GEMINI.md" "$g" 1
+  echo "AI context updated: workspace folders + global files of installed tools"
+}
+
+# Register the read-only MCP server with the AI tools that are installed.
+cmd_mcp_register() {
+  local mcp="$REAL_HOME/.local/bin/ws-mcp" src done=0
+  src="$(dirname "$WS_SELF")/ws-mcp.py"
+  if [[ -f "$src" ]]; then mkdir -p "$(dirname "$mcp")"; cp "$src" "$mcp"; chmod +x "$mcp"; fi
+  [[ -x "$mcp" ]] || die "ws-mcp not found next to ws; reinstall"
+  if command -v claude >/dev/null 2>&1; then
+    claude mcp add --scope user ws -- "$mcp" >/dev/null 2>&1 && { echo "registered with Claude Code"; done=1; }
+  fi
+  if [[ -d "$REAL_HOME/.codex" ]]; then
+    block_set "$REAL_HOME/.codex/config.toml" "# >>> ws mcp >>>" "# <<< ws mcp <<<" "[mcp_servers.ws]
+command = \"$mcp\"" 1 && { echo "registered with Codex"; done=1; }
+  fi
+  if [[ -d "$REAL_HOME/.gemini" ]] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$REAL_HOME/.gemini/settings.json" "$mcp" <<'PY' && { echo "registered with Gemini CLI"; done=1; }
+import json, os, sys
+p, cmd = sys.argv[1], sys.argv[2]
+d = json.load(open(p)) if os.path.exists(p) else {}
+d.setdefault("mcpServers", {})["ws"] = {"command": cmd}
+json.dump(d, open(p, "w"), indent=2)
+PY
+  fi
+  [[ "$done" == 1 ]] || echo "no supported AI tool found; point any MCP client at: $mcp"
 }
 
 cmd_tool() {
@@ -512,6 +599,8 @@ main() {
     init) cmd_init "$@" ;;
     setup-shell) cmd_setup_shell ;;
     migrate) cmd_migrate ;;
+    ai) cmd_ai ;;
+    mcp-register) cmd_mcp_register ;;
     version|--version) echo "ws $WS_VERSION" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;

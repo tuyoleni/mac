@@ -8,6 +8,7 @@ IFS=$'\n\t'
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
 #
 # Flags:   -y / --yes   skip the menu, install the defaults
+#          --demo       fake the installs, just show the progress UI
 #          full         also preselect postgres + redis
 #          docker       also preselect Docker Desktop
 #          workspaces   only the workspace system
@@ -44,6 +45,7 @@ ITEMS=(
 SEL=() # parallel to ITEMS: 1 selected, 0 not
 
 YES=0
+DEMO=0
 ONLY_WORKSPACES=0
 INTERACTIVE=0
 
@@ -77,6 +79,7 @@ parse_args() {
     case "$arg" in
       -h|--help|help) usage; exit 0 ;;
       -y|--yes) YES=1 ;;
+      --demo) DEMO=1 ;;
       full|all|--full|--all) preselect postgresql@16; preselect redis ;;
       docker|--docker) preselect docker ;;
       workspaces|--workspaces) ONLY_WORKSPACES=1 ;;
@@ -148,15 +151,19 @@ draw_menu() {
     inst=""; is_installed "$kind" "$name" && inst=" ${D}(already installed)${R}"
     out+=$'\033[2K'"  $pointer$mark $label$inst"$'\n'; n=$((n + 1))
   done
-  out+=$'\033[2K\n'$'\033[2K'"  ${D}up/down move   space toggle   a all   n none   enter start   q quit${R}"$'\n'
-  n=$((n + 2))
+  local count=0 j
+  for j in "${!ITEMS[@]}"; do [[ "${SEL[$j]}" == 1 ]] && count=$((count + 1)); done
+  pointer="  "; [[ "$cur" == "${#ITEMS[@]}" ]] && pointer="${CYN}>${R} "
+  out+=$'\033[2K\n'$'\033[2K'"  $pointer${B}${GRN}Install $count selected${R}"$'\n'
+  out+=$'\033[2K\n'$'\033[2K'"  ${D}arrows move   enter select   q quit${R}"$'\n'
+  n=$((n + 4))
   if [[ "$MENU_LINES" -gt 0 ]]; then printf '\033[%dA' "$MENU_LINES"; fi
   printf '%s' "$out"
   MENU_LINES="$n"
 }
 
 menu() {
-  local cur=0 last=$((${#ITEMS[@]} - 1)) key rest i
+  local cur=0 last=${#ITEMS[@]} key rest
   printf '\n%s mac setup %s\n\n' "${B}${BLU}" "$R"
   printf '\033[?25l'
   trap cursor_restore EXIT
@@ -170,13 +177,10 @@ menu() {
           '[A') [[ "$cur" -gt 0 ]] && cur=$((cur - 1)) ;;
           '[B') [[ "$cur" -lt "$last" ]] && cur=$((cur + 1)) ;;
         esac ;;
-      k) [[ "$cur" -gt 0 ]] && cur=$((cur - 1)) ;;
-      j) [[ "$cur" -lt "$last" ]] && cur=$((cur + 1)) ;;
-      ' ') if [[ "${SEL[$cur]}" == 1 ]]; then SEL[$cur]=0; else SEL[$cur]=1; fi ;;
-      a) for i in "${!ITEMS[@]}"; do SEL[$i]=1; done ;;
-      n) for i in "${!ITEMS[@]}"; do SEL[$i]=0; done ;;
       q) cursor_restore; printf '\nCancelled.\n'; exit 0 ;;
-      '') break ;;
+      ''|' ')
+        if [[ "$cur" == "$last" ]]; then break; fi
+        if [[ "${SEL[$cur]}" == 1 ]]; then SEL[$cur]=0; else SEL[$cur]=1; fi ;;
     esac
   done
   cursor_restore
@@ -287,6 +291,14 @@ act_git_config() {
   [[ -n "${GIT_USER_NAME:-}" ]]  && git config --global user.name "$GIT_USER_NAME"
   [[ -n "${GIT_USER_EMAIL:-}" ]] && git config --global user.email "$GIT_USER_EMAIL"
   if have git-lfs; then git lfs install --skip-repo; fi
+  return 0
+}
+
+act_demo() {
+  local i
+  for i in 1 2 3 4 5 6; do echo "==> Downloading part $i/6"; sleep 0.25; done
+  echo "==> Installing"; sleep 0.5
+  [[ "${1:-}" == fail ]] && { echo "Error: demo failure"; return 1; }
   return 0
 }
 
@@ -461,11 +473,17 @@ main() {
   done
 
   TOTAL=${#PLAN_LABELS[@]}
+  if [[ "$DEMO" == 1 ]]; then # nothing real runs; Postman "fails" to show that state
+    for i in "${!PLAN_CMDS[@]}"; do
+      PLAN_CMDS[$i]="act_demo"; [[ "${PLAN_LABELS[$i]}" == *Postman* ]] && PLAN_CMDS[$i]="act_demo fail"
+    done
+    need_brew=0; need_sudo=0
+  fi
   [[ "$TOTAL" -gt 0 ]] || { echo "Nothing selected."; exit 0; }
 
   # Anything that needs typing happens up front, before the progress screen.
   for i in "${!PLAN_CMDS[@]}"; do
-    [[ "${PLAN_CMDS[$i]}" == act_workspaces ]] && collect_identities
+    [[ "$DEMO" != 1 && "${PLAN_CMDS[$i]}" == act_workspaces ]] && collect_identities
   done
   if [[ "$need_sudo" == 1 || "$need_brew" == 1 ]]; then
     printf '%sAdministrator password%s (casks and Homebrew need it)\n' "$B" "$R"
@@ -484,7 +502,7 @@ main() {
     IFS=' ' read -r -a cmd <<< "${PLAN_CMDS[$i]}"
     run_step "${PLAN_LABELS[$i]}" "${cmd[@]}"
     # Homebrew's PATH has to be live in this shell for later steps.
-    [[ "${PLAN_LABELS[$i]}" == Homebrew ]] && load_brew
+    [[ "${PLAN_LABELS[$i]}" == Homebrew && "$DEMO" != 1 ]] && load_brew
   done
 
   have brew && brew cleanup >/dev/null 2>&1 || true

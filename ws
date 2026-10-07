@@ -4,6 +4,7 @@
 #
 #   ws add <name> [--dir <path>]   create a workspace (+ its folder under the root)
 #   ws login [name]                sign in to GitHub for a workspace (sets git identity)
+#   ws                             dashboard (arrow keys + enter)
 #   ws list | status | doctor      overview, login state, health checks
 #   ws which [path]                which workspace owns a path
 #   ws exec [-w name] -- cmd...    run a command inside a workspace
@@ -211,7 +212,8 @@ git_unlink() {
 
 ask() { # ask <prompt> <default>
   local a=""
-  if is_tty; then printf '  %s%s ' "$1" "${2:+[$2]}" >&2; IFS= read -r a; fi
+  # runs inside $(...), so stdout is a pipe: judge by stdin and stderr instead
+  if [[ -t 0 && -t 2 ]]; then printf '  %s%s ' "$1" "${2:+[$2]}" >&2; IFS= read -r a; fi
   printf '%s' "${a:-$2}"
 }
 
@@ -304,6 +306,13 @@ cmd_rm() {
   local root; root="$(ws_root "$name")"
   git_unlink "$name"
   rm -f "$root/.workspace"
+  # drop the AI context blocks we wrote there (and the file if nothing else is in it)
+  local f
+  for f in CLAUDE.md AGENTS.md GEMINI.md; do
+    [[ -f "$root/$f" ]] || continue
+    awk -v s="$AI_S" -v e="$AI_E" '$0==s{k=1;next} $0==e{k=0;next} !k{print}' "$root/$f" > "$root/$f.tmp"
+    if [[ -z "$(tr -d '[:space:]' < "$root/$f.tmp")" ]]; then rm -f "$root/$f" "$root/$f.tmp"; else mv "$root/$f.tmp" "$root/$f"; fi
+  done
   if [[ "$purge" == 1 ]]; then rm -rf "${WS_DIR:?}/$name"; echo "removed $name and its data"
   else rm -f "$WS_DIR/$name/root"; echo "removed $name (data kept in $WS_DIR/$name; --purge to delete it)"; fi
   echo "your project files in $root were not touched"
@@ -601,16 +610,102 @@ cmd_migrate() {
   cmd_setup_shell
 }
 
+# ---------- dashboard (run `ws` with no arguments) ----------
+
+dash_key() { # -> UP | DOWN | ENTER | QUIT | OTHER
+  local k rest=""
+  IFS= read -rsn1 k < /dev/tty || true
+  case "$k" in
+    $'\033') IFS= read -rsn2 -t 1 rest < /dev/tty || true
+      case "$rest" in '[A') echo UP ;; '[B') echo DOWN ;; *) echo OTHER ;; esac ;;
+    ''|' ') echo ENTER ;;
+    q) echo QUIT ;;
+    k) echo UP ;;
+    j) echo DOWN ;;
+    *) echo OTHER ;;
+  esac
+}
+
+# pick <title> <option>...  -> sets PICKED to the chosen index, or -1 for quit
+pick() {
+  local head="$1" cur=0 i n key
+  shift
+  local opts=("$@")
+  n=${#opts[@]}
+  printf '\033[?25l'
+  while true; do
+    printf '\033[2J\033[H\n  \033[1m%s\033[0m\n\n' "$head"
+    for ((i = 0; i < n; i++)); do
+      if [[ "$i" -eq "$cur" ]]; then printf '  \033[36m>\033[0m %s\n' "${opts[$i]}"; else printf '    %s\n' "${opts[$i]}"; fi
+    done
+    printf '\n  \033[2marrows move   enter select   q quit\033[0m\n'
+    key="$(dash_key)"
+    case "$key" in
+      UP)   [[ "$cur" -gt 0 ]] && cur=$((cur - 1)) ;;
+      DOWN) [[ "$cur" -lt $((n - 1)) ]] && cur=$((cur + 1)) ;;
+      ENTER) PICKED=$cur; printf '\033[?25h'; return 0 ;;
+      QUIT)  PICKED=-1; printf '\033[?25h'; return 0 ;;
+    esac
+  done
+}
+
+pause() { printf '\n  Press Enter to continue '; IFS= read -r _ < /dev/tty || true; }
+
+name_at() { ws_names | sed -n "$(($1 + 1))p"; }
+
+dash_workspace() { # dash_workspace <name>
+  local n="$1" login root
+  while true; do
+    login="$(login_gh "$n")"; root="$(ws_root "$n" | sed "s#^$REAL_HOME#~#")"
+    pick "$n   $root   ${login:-not signed in}" \
+      "Sign in to GitHub" "Open folder" "Copy SSH public key" "Remove workspace" "Back"
+    case "$PICKED" in
+      0) printf '\033[2J\033[H\n'; ( cmd_login "$n" ); pause ;;
+      1) if command -v open >/dev/null 2>&1; then open "$(ws_root "$n")"; elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$(ws_root "$n")"; fi ;;
+      2) printf '\033[2J\033[H\n'
+         if command -v pbcopy >/dev/null 2>&1; then pbcopy < "$WS_DIR/$n/ssh/id_ed25519.pub" && echo "  Copied. Paste it at github.com/settings/keys"
+         else echo "  $(cat "$WS_DIR/$n/ssh/id_ed25519.pub")"; fi
+         pause ;;
+      3) pick "Remove '$n'? Your project files are not touched." "No, keep it" "Yes, remove it"
+         if [[ "$PICKED" == 1 ]]; then printf '\033[2J\033[H\n'; ( cmd_rm "$n" ); pause; return 0; fi ;;
+      *) return 0 ;;
+    esac
+  done
+}
+
+cmd_dash() {
+  [[ -t 0 && -t 1 ]] || { cmd_status; return; }
+  local n rows count nm
+  while true; do
+    rows=(); count=0
+    for n in $(ws_names); do
+      rows+=("$(printf '%-12s %-30s %s' "$n" "$(ws_root "$n" | sed "s#^$REAL_HOME#~#")" "$(l="$(login_gh "$n")"; echo "${l:-not signed in}")")")
+      count=$((count + 1))
+    done
+    rows+=("+ Add a workspace" "Quit")
+    pick "Workspaces" "${rows[@]}"
+    if [[ "$PICKED" -lt 0 ]]; then break; fi
+    if [[ "$PICKED" -lt "$count" ]]; then dash_workspace "$(name_at "$PICKED")"
+    elif [[ "$PICKED" -eq "$count" ]]; then
+      printf '\033[2J\033[H\n'
+      nm="$(ask "Name for the new workspace (like work or personal):" "")"
+      if [[ -n "$nm" ]]; then ( cmd_add "$nm" ); pause; fi
+    else break; fi
+  done
+  printf '\033[2J\033[H'
+}
+
 usage() { sed -n '2,15p' "$WS_SELF" | sed 's/^# \{0,1\}//'; }
 
 main() {
-  local c="${1:-status}"
+  local c="${1:-dash}"
   [[ $# -gt 0 ]] && shift
   case "$c" in
     add) cmd_add "$@" ;;
     rm|remove) cmd_rm "$@" ;;
     list|ls) cmd_list ;;
     status|st) cmd_status ;;
+    dash|dashboard) cmd_dash ;;
     doctor) cmd_doctor ;;
     which) cmd_which "$@" ;;
     exec|x) cmd_exec "$@" ;;

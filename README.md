@@ -21,4 +21,4 @@ ws add work
 ws login work
 ```
 
-`ws status` shows all your workspaces.
+Run `ws` on its own to open the dashboard: see your workspaces, sign in, add or remove one.

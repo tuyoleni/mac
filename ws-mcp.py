@@ -10,6 +10,14 @@ import sys
 
 NAME, VERSION = "ws", "0.1.0"
 
+INSTRUCTIONS = (
+    "The user works in folder-based workspaces (managed by the `ws` tool). A project belongs to "
+    "whichever workspace folder it sits in; its git identity, SSH key and CLI logins (gh, gcloud, "
+    "vercel, convex) follow the folder automatically. Never run `gh auth switch` or change git "
+    "user.* to change accounts. Use workspace_for_path to find the workspace of a folder, "
+    "workspace_status to see which logins exist."
+)
+
 
 def ws_bin():
     for c in (os.environ.get("WS_BIN"), os.path.expanduser("~/.local/bin/ws"), shutil.which("ws")):
@@ -81,6 +89,7 @@ def handle(msg):
             "protocolVersion": want,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": NAME, "version": VERSION},
+            "instructions": INSTRUCTIONS,
         })
     elif method == "ping":
         reply(mid, {})

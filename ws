@@ -455,20 +455,63 @@ ws_ai_write() { # per-workspace context files in the workspace root
   for f in CLAUDE.md AGENTS.md GEMINI.md; do ai_write_file "$root/$f" "$(ai_text_workspace "$1")" 0; done
 }
 
+ai_text_chat() { # paste-ready text for chat apps that cannot read files
+  local n list=""
+  for n in $(ws_names); do list="$list
+- $n: $(ws_root "$n" | sed "s#^$REAL_HOME#~#")"; done
+  cat <<EOF
+I work in folder-based workspaces managed by a tool called ws. Each workspace is a
+folder tied to one set of accounts (GitHub, SSH key, git identity, gcloud, Vercel,
+Convex). A project belongs to whichever workspace folder it sits in:$list
+
+Commands that use an account pick the right one automatically from the current
+folder, so never tell me to run "gh auth switch", change git user.name/email, or log
+out and back in. For a specific project, find out its folder and check it with
+"ws which <path>". If a login is missing, tell me to run it inside that folder.
+EOF
+}
+
 cmd_ai() {
   local n g
+  if [[ "${1:-}" == --prompt ]]; then ai_text_chat; return; fi
   for n in $(ws_names); do ws_ai_write "$n"; done
   # global files, only for tools that are installed (their config folder exists)
   g="$(ai_text_global)"
   [[ -d "$REAL_HOME/.claude" ]] && ai_write_file "$REAL_HOME/.claude/CLAUDE.md" "$g" 1
   [[ -d "$REAL_HOME/.codex"  ]] && ai_write_file "$REAL_HOME/.codex/AGENTS.md" "$g" 1
   [[ -d "$REAL_HOME/.gemini" ]] && ai_write_file "$REAL_HOME/.gemini/GEMINI.md" "$g" 1
+  [[ -d "$REAL_HOME/.codeium/windsurf" ]] && ai_write_file "$REAL_HOME/.codeium/windsurf/memories/global_rules.md" "$g" 1
   echo "AI context updated: workspace folders + global files of installed tools"
+  echo "For chat apps (ChatGPT, Gemini, Claude.ai in a browser): ws ai --prompt  (paste into custom instructions)"
 }
 
-# Register the read-only MCP server with the AI tools that are installed.
+# Add the ws server to a JSON MCP config. Most tools use a top-level "mcpServers";
+# VS Code uses "servers" with an explicit "type".
+json_add_server() { # json_add_server <file> <command> [key]
+  python3 - "$1" "$2" "${3:-mcpServers}" <<'PY'
+import json, os, shutil, sys, tempfile
+p, cmd, key = sys.argv[1], sys.argv[2], sys.argv[3]
+d = {}
+if os.path.exists(p):
+    raw = open(p).read().strip()
+    if raw:
+        d = json.loads(raw)
+entry = {"command": cmd}
+if key == "servers":
+    entry = {"type": "stdio", "command": cmd}
+d.setdefault(key, {})["ws"] = entry
+os.makedirs(os.path.dirname(p), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p))
+os.write(fd, (json.dumps(d, indent=2) + "\n").encode()); os.close(fd)
+if os.path.exists(p):
+    shutil.copymode(p, tmp)
+os.replace(tmp, p)
+PY
+}
+
+# Register the read-only MCP server with every installed AI tool that supports MCP.
 cmd_mcp_register() {
-  local mcp="$REAL_HOME/.local/bin/ws-mcp" src done=0
+  local mcp="$REAL_HOME/.local/bin/ws-mcp" src n=0 f
   src="$(dirname "$WS_SELF")/ws-mcp.py"
   # the server shells out to ws, so make sure ws itself is installed
   if [[ ! -x "$REAL_HOME/.local/bin/ws" ]]; then
@@ -476,23 +519,33 @@ cmd_mcp_register() {
   fi
   if [[ -f "$src" ]]; then mkdir -p "$(dirname "$mcp")"; cp "$src" "$mcp"; chmod +x "$mcp"; fi
   [[ -x "$mcp" ]] || die "ws-mcp not found next to ws; reinstall"
+  command -v python3 >/dev/null 2>&1 || warn "python3 not found: JSON-based tools will be skipped"
+
+  # Claude Code: only through its own command. Its config file (~/.claude.json) is
+  # rewritten constantly by the app, so we never edit it directly.
   if command -v claude >/dev/null 2>&1; then
-    claude mcp add --scope user ws -- "$mcp" >/dev/null 2>&1 && { echo "registered with Claude Code"; done=1; }
+    claude mcp add --scope user ws -- "$mcp" >/dev/null 2>&1 && { echo "registered with Claude Code"; n=$((n + 1)); }
+  else
+    echo "Claude Code: CLAUDE.md files already cover it; for MCP too run: claude mcp add --scope user ws -- $mcp"
   fi
   if [[ -d "$REAL_HOME/.codex" ]]; then
     block_set "$REAL_HOME/.codex/config.toml" "# >>> ws mcp >>>" "# <<< ws mcp <<<" "[mcp_servers.ws]
-command = \"$mcp\"" 1 && { echo "registered with Codex"; done=1; }
+command = \"$mcp\"" 1 && { echo "registered with Codex"; n=$((n + 1)); }
   fi
-  if [[ -d "$REAL_HOME/.gemini" ]] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$REAL_HOME/.gemini/settings.json" "$mcp" <<'PY' && { echo "registered with Gemini CLI"; done=1; }
-import json, os, sys
-p, cmd = sys.argv[1], sys.argv[2]
-d = json.load(open(p)) if os.path.exists(p) else {}
-d.setdefault("mcpServers", {})["ws"] = {"command": cmd}
-json.dump(d, open(p, "w"), indent=2)
-PY
-  fi
-  [[ "$done" == 1 ]] || echo "no supported AI tool found; point any MCP client at: $mcp"
+  # JSON-config tools: only those that are installed (their folder exists)
+  for f in \
+    "$REAL_HOME/.gemini|$REAL_HOME/.gemini/settings.json|Gemini CLI|mcpServers" \
+    "$REAL_HOME/.gemini/config|$REAL_HOME/.gemini/config/mcp_config.json|Antigravity|mcpServers" \
+    "$REAL_HOME/Library/Application Support/Claude|$REAL_HOME/Library/Application Support/Claude/claude_desktop_config.json|Claude Desktop|mcpServers" \
+    "$REAL_HOME/Library/Application Support/Code/User|$REAL_HOME/Library/Application Support/Code/User/mcp.json|VS Code (Copilot)|servers" \
+    "$REAL_HOME/.cursor|$REAL_HOME/.cursor/mcp.json|Cursor|mcpServers" \
+    "$REAL_HOME/.codeium/windsurf|$REAL_HOME/.codeium/windsurf/mcp_config.json|Windsurf|mcpServers"; do
+    local dir file name key
+    IFS='|' read -r dir file name key <<< "$f"
+    [[ -d "$dir" ]] || continue
+    if json_add_server "$file" "$mcp" "$key" 2>/dev/null; then echo "registered with $name"; n=$((n + 1)); else warn "could not update $name config ($file)"; fi
+  done
+  [[ "$n" -gt 0 ]] || echo "no supported AI tool found; point any MCP client at: $mcp"
 }
 
 cmd_tool() {
@@ -738,7 +791,7 @@ main() {
     setup-shell) cmd_setup_shell ;;
     migrate) cmd_migrate ;;
     login) cmd_login "$@" ;;
-    ai) cmd_ai ;;
+    ai) cmd_ai "$@" ;;
     mcp-register) cmd_mcp_register ;;
     version|--version) echo "ws $WS_VERSION" ;;
     help|-h|--help) usage ;;

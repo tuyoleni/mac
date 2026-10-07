@@ -61,7 +61,8 @@ _walk() {
 
 resolve() { # resolve [path] -> name or empty (exit 1). Tries logical then physical path.
   local p="${1:-$PWD}" d
-  [[ -d "$p" ]] || p="$(dirname "$p")"
+  # a file, or a folder that does not exist yet: use the nearest existing parent
+  while [[ ! -d "$p" && "$p" != / && "$p" != . ]]; do p="$(dirname "$p")"; done
   d="$(cd "$p" 2>/dev/null && pwd)" || return 1
   _walk "$d" && return 0
   d="$(cd "$p" 2>/dev/null && pwd -P)" || return 1
@@ -435,6 +436,10 @@ cmd_ai() {
 cmd_mcp_register() {
   local mcp="$REAL_HOME/.local/bin/ws-mcp" src done=0
   src="$(dirname "$WS_SELF")/ws-mcp.py"
+  # the server shells out to ws, so make sure ws itself is installed
+  if [[ ! -x "$REAL_HOME/.local/bin/ws" ]]; then
+    mkdir -p "$REAL_HOME/.local/bin"; cp "$WS_SELF" "$REAL_HOME/.local/bin/ws"; chmod +x "$REAL_HOME/.local/bin/ws"
+  fi
   if [[ -f "$src" ]]; then mkdir -p "$(dirname "$mcp")"; cp "$src" "$mcp"; chmod +x "$mcp"; fi
   [[ -x "$mcp" ]] || die "ws-mcp not found next to ws; reinstall"
   if command -v claude >/dev/null 2>&1; then

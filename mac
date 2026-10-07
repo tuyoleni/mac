@@ -1,65 +1,507 @@
-# =========================
-# WORKSPACE OS LAYER (YOUR SYSTEM)
-# =========================
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
 
-WORKSPACES=("personal" "moodbod" "asmbly")
-BASE="$HOME/.profiles"
+# Interactive macOS laptop setup: pick what you want, watch it happen.
+# Safe to rerun. Works under macOS' stock bash 3.2.
+#
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/tuyoleni/mac/main/mac)"
+#
+# Flags:   -y / --yes   skip the menu, install the defaults
+#          full         also preselect postgres + redis
+#          docker       also preselect Docker Desktop
+#          workspaces   only the workspace system
+# Env:     GIT_USER_NAME, PERSONAL_EMAIL, MOODBOD_EMAIL, ASMBLY_EMAIL
+# Log:     ~/.mac-setup.log
 
-setup_workspaces() {
-  echo "Setting up workspace system..."
+WORKSPACES=(personal moodbod asmbly)
+PROFILES_DIR="$HOME/.profiles"
+SWITCHER="$HOME/workspace-switcher.sh"
+LOG="$HOME/.mac-setup.log"
+TTY=/dev/tty
 
-  mkdir -p "$BASE"
+# kind|name|label|default(1/0)
+ITEMS=(
+  "formula|git|Git|1"
+  "formula|git-lfs|Git LFS|1"
+  "formula|gh|GitHub CLI|1"
+  "formula|node|Node.js|1"
+  "formula|python|Python|1"
+  "formula|postgresql@16|PostgreSQL 16|0"
+  "formula|redis|Redis|0"
+  "cask|webstorm|WebStorm|1"
+  "cask|postman|Postman|1"
+  "cask|notchnook|NotchNook|1"
+  "cask|arc|Arc|1"
+  "cask|orbstack|OrbStack|1"
+  "cask|docker|Docker Desktop|0"
+  "cask|android-studio|Android Studio (large, installed last)|1"
+  "task|git_config|Git defaults (main branch, LFS, ...)|1"
+  "task|workspaces|Workspaces: personal / moodbod / asmbly|1"
+  "task|shell|Shell setup (.zshrc: brew, Android, Java, switcher)|1"
+  "task|defaults|macOS defaults (key repeat, Finder, Dock)|0"
+)
+SEL=() # parallel to ITEMS: 1 selected, 0 not
 
-  for ws in "${WORKSPACES[@]}"; do
-    echo "Workspace: $ws"
+YES=0
+ONLY_WORKSPACES=0
+INTERACTIVE=0
 
-    mkdir -p "$BASE/$ws"/{home,gcloud,ssh,vercel,convex}
+# ---------- ui helpers ----------
 
-    # SSH per workspace (stable, reproducible)
-    if [[ ! -f "$BASE/$ws/ssh/id_ed25519" ]]; then
-      ssh-keygen -t ed25519 -C "$ws@mac" \
-        -f "$BASE/$ws/ssh/id_ed25519" -N "" >/dev/null 2>&1 || true
-    fi
+if [[ -t 1 ]]; then
+  B=$'\033[1m'; D=$'\033[2m'; R=$'\033[0m'
+  RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; BLU=$'\033[34m'; CYN=$'\033[36m'
+else
+  B=''; D=''; R=''; RED=''; GRN=''; YEL=''; BLU=''; CYN=''
+fi
 
-    # ENV (this is your real working model)
-    cat > "$BASE/$ws/env.sh" << EOF
-export PROFILE_NAME="$ws"
+have() { command -v "$1" >/dev/null 2>&1; }
+die()  { printf '%sError:%s %s\n' "$RED" "$R" "$*" >&2; exit 1; }
+cols() { local c; c="$(tput cols 2>/dev/null || echo 80)"; echo "$c"; }
+cursor_restore() { printf '\033[?25h' 2>/dev/null || true; }
 
-export GIT_AUTHOR_NAME="$ws"
-export GIT_AUTHOR_EMAIL="$ws@dev.local"
-
-export CLOUDSDK_CONFIG="$BASE/$ws/gcloud"
-
-export GIT_SSH_COMMAND="ssh -i $BASE/$ws/ssh/id_ed25519"
-
-export PS1="($ws) %~ %# "
+usage() {
+  cat <<'EOF'
+Usage: mac [-y|--yes] [full] [docker] [workspaces]
+  -y, --yes     skip the menu and install the defaults
+  full          preselect PostgreSQL + Redis
+  docker        preselect Docker Desktop
+  workspaces    only set up the workspace system
 EOF
+}
 
+parse_args() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help|help) usage; exit 0 ;;
+      -y|--yes) YES=1 ;;
+      full|all|--full|--all) preselect postgresql@16; preselect redis ;;
+      docker|--docker) preselect docker ;;
+      workspaces|--workspaces) ONLY_WORKSPACES=1 ;;
+      core|--core|--) ;;
+      *) die "Unknown option: $arg (try: help)" ;;
+    esac
   done
 }
 
-setup_switcher() {
-  cat > "$HOME/workspace-switcher.sh" << 'EOF'
-WORKSPACES=("personal" "moodbod" "asmbly")
-BASE="$HOME/.profiles"
+# Defaults can be bumped by args before the menu is built.
+PRESELECT=""
+preselect() { PRESELECT="${PRESELECT} $1 "; }
+
+item_field() { # item_field <index> <1-4>
+  local IFS='|' f
+  read -r -a f <<< "${ITEMS[$1]}"
+  printf '%s' "${f[$(($2 - 1))]}"
+}
+
+# Installed sets are read once; brew is too slow to ask per item per keypress.
+INSTALLED_FORMULAE=""; INSTALLED_CASKS=""
+scan_installed() {
+  load_brew
+  have brew || return 0
+  INSTALLED_FORMULAE="$(printf '\n%s\n' "$(brew list --formula -1 2>/dev/null || true)")"
+  INSTALLED_CASKS="$(printf '\n%s\n' "$(brew list --cask -1 2>/dev/null || true)")"
+}
+
+is_installed() { # kind name
+  case "$1" in
+    formula) [[ "$INSTALLED_FORMULAE" == *$'\n'"$2"$'\n'* ]] ;;
+    cask)    [[ "$INSTALLED_CASKS" == *$'\n'"$2"$'\n'* ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+init_selection() {
+  local i kind name def
+  scan_installed
+  for i in "${!ITEMS[@]}"; do
+    kind="$(item_field "$i" 1)"; name="$(item_field "$i" 2)"; def="$(item_field "$i" 4)"
+    [[ "$PRESELECT" == *" $name "* ]] && def=1
+    if [[ "$ONLY_WORKSPACES" == 1 ]]; then
+      case "$name" in workspaces|shell) def=1 ;; *) def=0 ;; esac
+    fi
+    # Already-installed things start unticked: nothing to do.
+    if [[ "$def" == 1 ]] && is_installed "$kind" "$name"; then def=0; fi
+    SEL[$i]="$def"
+  done
+}
+
+# ---------- interactive menu ----------
+
+MENU_LINES=0
+draw_menu() {
+  local cur="$1" i kind name label mark pointer line prev="" out="" n=0 inst
+  for i in "${!ITEMS[@]}"; do
+    kind="$(item_field "$i" 1)"; name="$(item_field "$i" 2)"; label="$(item_field "$i" 3)"
+    if [[ "$kind" != "$prev" ]]; then
+      case "$kind" in
+        formula) line="${B}Command-line tools${R}" ;;
+        cask)    line="${B}Apps${R}" ;;
+        task)    line="${B}Configuration${R}" ;;
+      esac
+      out+=$'\033[2K'"  $line"$'\n'; n=$((n + 1)); prev="$kind"
+    fi
+    if [[ "${SEL[$i]}" == 1 ]]; then mark="${GRN}[x]${R}"; else mark="[ ]"; fi
+    pointer="  "; [[ "$i" == "$cur" ]] && pointer="${CYN}>${R} "
+    inst=""; is_installed "$kind" "$name" && inst=" ${D}(already installed)${R}"
+    out+=$'\033[2K'"  $pointer$mark $label$inst"$'\n'; n=$((n + 1))
+  done
+  out+=$'\033[2K\n'$'\033[2K'"  ${D}up/down move   space toggle   a all   n none   enter start   q quit${R}"$'\n'
+  n=$((n + 2))
+  if [[ "$MENU_LINES" -gt 0 ]]; then printf '\033[%dA' "$MENU_LINES"; fi
+  printf '%s' "$out"
+  MENU_LINES="$n"
+}
+
+menu() {
+  local cur=0 last=$((${#ITEMS[@]} - 1)) key rest i
+  printf '\n%s mac setup %s\n\n' "${B}${BLU}" "$R"
+  printf '\033[?25l'
+  trap cursor_restore EXIT
+  while true; do
+    draw_menu "$cur"
+    IFS= read -rsn1 key < "$TTY" || true
+    case "$key" in
+      $'\033')
+        rest=""; IFS= read -rsn2 -t 1 rest < "$TTY" || true
+        case "$rest" in
+          '[A') [[ "$cur" -gt 0 ]] && cur=$((cur - 1)) ;;
+          '[B') [[ "$cur" -lt "$last" ]] && cur=$((cur + 1)) ;;
+        esac ;;
+      k) [[ "$cur" -gt 0 ]] && cur=$((cur - 1)) ;;
+      j) [[ "$cur" -lt "$last" ]] && cur=$((cur + 1)) ;;
+      ' ') if [[ "${SEL[$cur]}" == 1 ]]; then SEL[$cur]=0; else SEL[$cur]=1; fi ;;
+      a) for i in "${!ITEMS[@]}"; do SEL[$i]=1; done ;;
+      n) for i in "${!ITEMS[@]}"; do SEL[$i]=0; done ;;
+      q) cursor_restore; printf '\nCancelled.\n'; exit 0 ;;
+      '') break ;;
+    esac
+  done
+  cursor_restore
+  printf '\n'
+}
+
+# ---------- workspace identity prompts ----------
+
+ask() { # ask <prompt> <default>  -> echoes answer
+  local ans=""
+  if [[ "$INTERACTIVE" == 1 ]]; then
+    printf '  %s%s%s%s ' "$B" "$1" "$R" "${2:+ ${D}[$2]${R}}" > "$TTY"
+    IFS= read -r ans < "$TTY" || true
+  fi
+  printf '%s' "${ans:-$2}"
+}
+
+collect_identities() {
+  local ws upper email name need=0
+  for ws in "${WORKSPACES[@]}"; do
+    [[ -f "$PROFILES_DIR/$ws/profile.env" ]] || need=1
+  done
+  [[ "$need" == 1 ]] || return 0
+  [[ "$INTERACTIVE" == 1 ]] && printf '%sGit identity per workspace%s %s(enter to skip)%s\n' "$B" "$R" "$D" "$R"
+  name="$(ask "Your name:" "${GIT_USER_NAME:-}")"
+  for ws in "${WORKSPACES[@]}"; do
+    [[ -f "$PROFILES_DIR/$ws/profile.env" ]] && continue
+    upper="$(printf '%s' "$ws" | tr '[:lower:]' '[:upper:]')"
+    eval "email=\"\${${upper}_EMAIL:-}\""
+    email="$(ask "Email for $ws:" "$email")"
+    mkdir -p "$PROFILES_DIR/$ws"
+    printf 'WS_NAME="%s"\nWS_EMAIL="%s"\n' "$name" "$email" > "$PROFILES_DIR/$ws/profile.env"
+  done
+  printf '\n'
+}
+
+# ---------- step runner (spinner + live last-log-line) ----------
+
+TOTAL=0; DONE=0; OKS=0; FAILS=()
+START_ALL=0
+
+run_step() { # run_step <label> <command...>
+  local label="$1" pid rc t0 i=0 last w frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+  shift
+  DONE=$((DONE + 1)); t0=$SECONDS
+  printf '\n=== [%s/%s] %s\n' "$DONE" "$TOTAL" "$label" >> "$LOG"
+
+  ( "$@" ) >> "$LOG" 2>&1 < /dev/null &
+  pid=$!
+  trap 'kill "$pid" 2>/dev/null; cursor_restore; exit 130' INT
+  printf '\033[?25l'
+  while kill -0 "$pid" 2>/dev/null; do
+    last="$(tail -n 1 "$LOG" 2>/dev/null | tr -d '\r' | sed $'s/\033\\[[0-9;?]*[a-zA-Z]//g')"
+    w=$(( $(cols) - ${#label} - 24 )); [[ "$w" -lt 10 ]] && w=10
+    printf '\r\033[2K  %s[%s/%s]%s %s%s%s %s %s%s%s' "$D" "$DONE" "$TOTAL" "$R" "$CYN" "${frames[$((i % 10))]}" "$R" "$label" "$D" "${last:0:$w}" "$R"
+    i=$((i + 1)); sleep 0.1
+  done
+  rc=0; wait "$pid" || rc=$?
+  trap - INT
+  printf '\033[?25h\r\033[2K'
+  if [[ "$rc" -eq 0 ]]; then
+    printf '  %s[%s/%s]%s %s✓%s %s %s(%ss)%s\n' "$D" "$DONE" "$TOTAL" "$R" "$GRN" "$R" "$label" "$D" "$((SECONDS - t0))" "$R"
+    OKS=$((OKS + 1))
+  else
+    printf '  %s[%s/%s]%s %s✗%s %s\n' "$D" "$DONE" "$TOTAL" "$R" "$RED" "$R" "$label"
+    tail -n 6 "$LOG" | sed 's/^/      /' | cut -c1-"$(cols)"
+    FAILS+=("$label")
+  fi
+  return 0 # a failed step never aborts the rest
+}
+
+# ---------- actions (run inside run_step subshells) ----------
+
+load_brew() {
+  if   [[ -x /opt/homebrew/bin/brew ]]; then eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [[ -x /usr/local/bin/brew ]];    then eval "$(/usr/local/bin/brew shellenv)"
+  fi
+}
+
+act_clt() {
+  xcode-select -p >/dev/null 2>&1 && { echo "already installed"; return 0; }
+  echo "Complete the Command Line Tools popup..."
+  xcode-select --install >/dev/null 2>&1 || true
+  until xcode-select -p >/dev/null 2>&1; do sleep 5; done
+}
+
+act_homebrew() {
+  load_brew
+  if have brew; then echo "already installed"; else
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    load_brew
+  fi
+  have brew || { echo "brew not on PATH"; return 1; }
+  brew analytics off || true
+  brew update
+}
+
+act_brew() { # kind name
+  load_brew
+  if [[ "$1" == cask ]]; then brew install --cask "$2"; else brew install "$2"; fi
+}
+
+act_git_config() {
+  git config --global init.defaultBranch main
+  git config --global core.autocrlf input
+  git config --global push.autoSetupRemote true
+  git config --global fetch.prune true
+  [[ -n "${GIT_USER_NAME:-}" ]]  && git config --global user.name "$GIT_USER_NAME"
+  [[ -n "${GIT_USER_EMAIL:-}" ]] && git config --global user.email "$GIT_USER_EMAIL"
+  if have git-lfs; then git lfs install --skip-repo; fi
+  return 0
+}
+
+act_defaults() {
+  defaults write NSGlobalDomain AppleShowAllExtensions -bool true
+  defaults write NSGlobalDomain InitialKeyRepeat -int 15
+  defaults write NSGlobalDomain KeyRepeat -int 2
+  defaults write com.apple.finder ShowPathbar -bool true
+  defaults write com.apple.finder ShowStatusBar -bool true
+  defaults write com.apple.dock autohide -bool true
+  killall Finder Dock >/dev/null 2>&1 || true
+}
+
+replace_block() {
+  local file="$1" start="$2" end="$3" body="$4" tmp
+  touch "$file"
+  tmp="$(mktemp)"
+  awk -v s="$start" -v e="$end" '$0==s{skip=1;next} $0==e{skip=0;next} !skip{print}' "$file" > "$tmp"
+  { printf '%s\n%s\n%s\n\n' "$start" "$body" "$end"; cat "$tmp"; } > "$file"
+  rm -f "$tmp"
+}
+
+zshrc_block() {
+  cat <<'EOF'
+if [[ -x /opt/homebrew/bin/brew ]]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [[ -x /usr/local/bin/brew ]]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+fi
+
+typeset -U path PATH
+
+if [[ -d "$HOME/Library/Android/sdk" ]]; then
+  export ANDROID_HOME="$HOME/Library/Android/sdk"
+  export ANDROID_SDK_ROOT="$ANDROID_HOME"
+  for p in platform-tools emulator cmdline-tools/latest/bin; do
+    [[ -d "$ANDROID_HOME/$p" ]] && path=("$ANDROID_HOME/$p" $path)
+  done
+fi
+
+# Android Studio's bundled JDK when present, else whatever java_home finds.
+if [[ -d "/Applications/Android Studio.app/Contents/jbr/Contents/Home" ]]; then
+  export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+elif [[ -x /usr/libexec/java_home ]] && _jh="$(/usr/libexec/java_home 2>/dev/null)"; then
+  export JAVA_HOME="$_jh"
+fi
+unset _jh
+
+[[ -f "$HOME/workspace-switcher.sh" ]] && source "$HOME/workspace-switcher.sh"
+EOF
+}
+
+act_shell() {
+  local zshrc="${ZDOTDIR:-$HOME}/.zshrc" tmp
+  if [[ -f "$zshrc" ]]; then # drop the legacy unmanaged source line
+    tmp="$(mktemp)"
+    grep -v -E '^source ~/workspace-switcher\.sh$' "$zshrc" > "$tmp" || true
+    cat "$tmp" > "$zshrc"; rm -f "$tmp"
+  fi
+  replace_block "$zshrc" "# >>> mac >>>" "# <<< mac <<<" "$(zshrc_block)"
+  echo "updated $zshrc"
+}
+
+# Each workspace gets its own ssh key, gcloud + gh config, git identity, and a
+# private HOME that Convex/Vercel run under (they keep logins in ~, no override).
+act_workspaces() {
+  local ws dir
+  for ws in "${WORKSPACES[@]}"; do
+    dir="$PROFILES_DIR/$ws"
+    mkdir -p "$dir"/{home,gcloud,ssh,gh}
+    chmod 700 "$dir/ssh"
+    [[ -f "$dir/profile.env" ]] || printf 'WS_NAME=""\nWS_EMAIL=""\n' > "$dir/profile.env"
+    if [[ ! -f "$dir/ssh/id_ed25519" ]]; then
+      ssh-keygen -t ed25519 -C "$ws@$(hostname -s)" -f "$dir/ssh/id_ed25519" -N "" >/dev/null
+      echo "generated ssh key for $ws"
+    fi
+  done
+
+  cat > "$SWITCHER" <<'EOF'
+# Generated by https://github.com/tuyoleni/mac -- edit ~/.profiles/<ws>/profile.env instead.
+PROFILES_DIR="$HOME/.profiles"
 
 switch_workspace() {
-  ws=$1
-  source "$BASE/$ws/env.sh"
+  local ws="$1" dir="$PROFILES_DIR/$1" WS_NAME="" WS_EMAIL=""
+  [[ -d "$dir" ]] || { echo "Unknown workspace: $ws" >&2; return 1; }
+  [[ -f "$dir/profile.env" ]] && source "$dir/profile.env"
 
-  export CLOUDSDK_CONFIG="$BASE/$ws/gcloud"
+  export PROFILE_NAME="$ws"
+  export WORKSPACE_HOME="$dir/home"
 
+  export CLOUDSDK_CONFIG="$dir/gcloud"
+  export GH_CONFIG_DIR="$dir/gh"
+  export GIT_SSH_COMMAND="ssh -i $dir/ssh/id_ed25519 -o IdentitiesOnly=yes"
+
+  if [[ -n "$WS_NAME" ]]; then
+    export GIT_AUTHOR_NAME="$WS_NAME" GIT_COMMITTER_NAME="$WS_NAME"
+  else
+    unset GIT_AUTHOR_NAME GIT_COMMITTER_NAME
+  fi
+  if [[ -n "$WS_EMAIL" ]]; then
+    export GIT_AUTHOR_EMAIL="$WS_EMAIL" GIT_COMMITTER_EMAIL="$WS_EMAIL"
+  else
+    unset GIT_AUTHOR_EMAIL GIT_COMMITTER_EMAIL
+  fi
+
+  [[ -f "$dir/local.sh" ]] && source "$dir/local.sh"   # optional extra exports
+
+  : "${_WS_BASE_PS1:=$PS1}"
+  PS1="($ws) $_WS_BASE_PS1"
   echo "Switched to $ws"
+}
+
+# Run a command with the workspace's private HOME (only that command).
+_in_workspace() {
+  if [[ -z "${WORKSPACE_HOME:-}" ]]; then
+    echo "No workspace active. Run: personal | moodbod | asmbly" >&2
+    return 1
+  fi
+  local cache="${npm_config_cache:-$HOME/.npm}"
+  HOME="$WORKSPACE_HOME" npm_config_cache="$cache" command "$@"
+}
+
+convex() { _in_workspace npx convex "$@"; }
+vercel() { _in_workspace vercel "$@"; }
+npx() {
+  case "$1" in
+    convex|vercel) _in_workspace npx "$@" ;;
+    *) command npx "$@" ;;
+  esac
 }
 
 alias personal='switch_workspace personal'
 alias moodbod='switch_workspace moodbod'
 alias asmbly='switch_workspace asmbly'
 EOF
-
-  grep -q workspace-switcher.sh ~/.zshrc || \
-    echo "source ~/workspace-switcher.sh" >> ~/.zshrc
 }
 
-setup_workspaces
-setup_switcher
+# ---------- main ----------
+
+main() {
+  parse_args "$@"
+  [[ "$(uname -s)" == Darwin ]] || die "macOS only."
+
+  if [[ -r "$TTY" && -t 1 && "$YES" != 1 ]]; then INTERACTIVE=1; fi
+  init_selection
+  if [[ "$INTERACTIVE" == 1 ]]; then menu; fi
+
+  # Build the plan from the selection. Brew items pull in CLT + Homebrew.
+  local i kind name label need_brew=0 need_sudo=0
+  PLAN_LABELS=(); PLAN_CMDS=()
+  for i in "${!ITEMS[@]}"; do
+    [[ "${SEL[$i]}" == 1 ]] || continue
+    kind="$(item_field "$i" 1)"
+    [[ "$kind" == formula || "$kind" == cask ]] && need_brew=1
+    [[ "$kind" == cask ]] && need_sudo=1
+  done
+
+  [[ "$need_brew" == 1 ]] && { PLAN_LABELS+=("Xcode Command Line Tools" "Homebrew"); PLAN_CMDS+=("act_clt" "act_homebrew"); }
+  for i in "${!ITEMS[@]}"; do
+    [[ "${SEL[$i]}" == 1 ]] || continue
+    kind="$(item_field "$i" 1)"; name="$(item_field "$i" 2)"; label="$(item_field "$i" 3)"
+    case "$kind" in
+      formula|cask) PLAN_LABELS+=("Install $label"); PLAN_CMDS+=("act_brew $kind $name") ;;
+      task)
+        case "$name" in
+          git_config) PLAN_LABELS+=("$label"); PLAN_CMDS+=("act_git_config") ;;
+          workspaces) PLAN_LABELS+=("$label"); PLAN_CMDS+=("act_workspaces") ;;
+          shell)      PLAN_LABELS+=("$label"); PLAN_CMDS+=("act_shell") ;;
+          defaults)   PLAN_LABELS+=("$label"); PLAN_CMDS+=("act_defaults") ;;
+        esac ;;
+    esac
+  done
+
+  TOTAL=${#PLAN_LABELS[@]}
+  [[ "$TOTAL" -gt 0 ]] || { echo "Nothing selected."; exit 0; }
+
+  # Anything that needs typing happens up front, before the progress screen.
+  for i in "${!PLAN_CMDS[@]}"; do
+    [[ "${PLAN_CMDS[$i]}" == act_workspaces ]] && collect_identities
+  done
+  if [[ "$need_sudo" == 1 || "$need_brew" == 1 ]]; then
+    printf '%sAdministrator password%s (casks and Homebrew need it)\n' "$B" "$R"
+    sudo -v
+    ( while true; do sudo -n true; sleep 50; kill -0 "$$" 2>/dev/null || exit; done ) 2>/dev/null &
+    trap 'kill $! 2>/dev/null || true' EXIT
+    printf '\n'
+  fi
+
+  : > "$LOG"
+  START_ALL=$SECONDS
+  printf '%sInstalling %s steps%s %s(log: %s)%s\n\n' "$B" "$TOTAL" "$R" "$D" "$LOG" "$R"
+
+  # shellcheck disable=SC2086
+  for i in "${!PLAN_CMDS[@]}"; do
+    IFS=' ' read -r -a cmd <<< "${PLAN_CMDS[$i]}"
+    run_step "${PLAN_LABELS[$i]}" "${cmd[@]}"
+    # Homebrew's PATH has to be live in this shell for later steps.
+    [[ "${PLAN_LABELS[$i]}" == Homebrew ]] && load_brew
+  done
+
+  have brew && brew cleanup >/dev/null 2>&1 || true
+
+  printf '\n%s%s/%s steps succeeded%s in %ss\n' "$B" "$OKS" "$TOTAL" "$R" "$((SECONDS - START_ALL))"
+  if [[ "${#FAILS[@]}" -gt 0 ]]; then
+    printf '%sFailed (rerun to retry, details in %s):%s\n' "$YEL" "$LOG" "$R"
+    printf '  - %s\n' "${FAILS[@]}"
+  fi
+  printf '\nNext:\n  - open a new terminal\n  - run %spersonal%s / %smoodbod%s / %sasmbly%s, then %sgh auth login%s and %snpx convex login%s in each\n' "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
+  if [[ -d "$PROFILES_DIR" ]]; then
+    printf '  - add these SSH public keys to the matching GitHub accounts:\n'
+    for name in "${WORKSPACES[@]}"; do
+      [[ -f "$PROFILES_DIR/$name/ssh/id_ed25519.pub" ]] && printf '      %-9s %s\n' "$name" "$PROFILES_DIR/$name/ssh/id_ed25519.pub"
+    done
+  fi
+  printf '\n'
+}
+
+main "$@"

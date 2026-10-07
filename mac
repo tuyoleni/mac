@@ -131,60 +131,156 @@ init_selection() {
   done
 }
 
-# ---------- interactive menu ----------
+# ---------- onboarding wizard ----------
 
-MENU_LINES=0
-draw_menu() {
-  local cur="$1" i kind name label mark pointer line prev="" out="" n=0 inst
-  for i in "${!ITEMS[@]}"; do
-    kind="$(item_field "$i" 1)"; name="$(item_field "$i" 2)"; label="$(item_field "$i" 3)"
-    if [[ "$kind" != "$prev" ]]; then
-      case "$kind" in
-        formula) line="${B}Command-line tools${R}" ;;
-        cask)    line="${B}Apps${R}" ;;
-        task)    line="${B}Configuration${R}" ;;
-      esac
-      out+=$'\033[2K'"  $line"$'\n'; n=$((n + 1)); prev="$kind"
-    fi
-    if [[ "${SEL[$i]}" == 1 ]]; then mark="${GRN}[x]${R}"; else mark="[ ]"; fi
-    pointer="  "; [[ "$i" == "$cur" ]] && pointer="${CYN}>${R} "
-    inst=""; is_installed "$kind" "$name" && inst=" ${D}(already installed)${R}"
-    out+=$'\033[2K'"  $pointer$mark $label$inst"$'\n'; n=$((n + 1))
-  done
-  local count=0 j
-  for j in "${!ITEMS[@]}"; do [[ "${SEL[$j]}" == 1 ]] && count=$((count + 1)); done
-  pointer="  "; [[ "$cur" == "${#ITEMS[@]}" ]] && pointer="${CYN}>${R} "
-  out+=$'\033[2K\n'$'\033[2K'"  $pointer${B}${GRN}Install $count selected${R}"$'\n'
-  out+=$'\033[2K\n'$'\033[2K'"  ${D}arrows move   enter select   q quit${R}"$'\n'
-  n=$((n + 4))
-  if [[ "$MENU_LINES" -gt 0 ]]; then printf '\033[%dA' "$MENU_LINES"; fi
-  printf '%s' "$out"
-  MENU_LINES="$n"
+STEPS=5
+MODE=guided
+PAGE_BODY=""
+clear_screen() { printf '\033[2J\033[H'; }
+
+header() { # header <step> <title> <subtitle>
+  local dots="" i
+  if [[ "$MODE" == guided ]]; then
+    for ((i = 1; i <= STEPS; i++)); do
+      if [[ "$i" -le "$1" ]]; then dots+="${CYN}●${R} "; else dots+="${D}○${R} "; fi
+    done
+    dots="  $dots ${D}step $1 of $STEPS${R}"
+  fi
+  clear_screen
+  printf '\n  %s mac setup %s%s\n\n' "${B}${BLU}" "$R" "$dots"
+  printf '  %s%s%s\n  %s%s%s\n\n' "$B" "$2" "$R" "$D" "$3" "$R"
 }
 
-menu() {
-  local cur=0 last=${#ITEMS[@]} key rest
-  printf '\n%s mac setup %s\n\n' "${B}${BLU}" "$R"
+read_key() { # -> UP | DOWN | ENTER | QUIT | other
+  local k rest=""
+  IFS= read -rsn1 k < "$TTY" || true
+  case "$k" in
+    $'\033') IFS= read -rsn2 -t 1 rest < "$TTY" || true
+      case "$rest" in '[A') echo UP ;; '[B') echo DOWN ;; *) echo OTHER ;; esac ;;
+    ''|' ') echo ENTER ;;
+    q) echo QUIT ;;
+    *) echo OTHER ;;
+  esac
+}
+
+# Generic page: rows are checkboxes (indices in $idx) then nav rows.
+# Returns 0 for Continue/Install, 1 for Back.
+page() { # page <step> <title> <subtitle> <kind|"review"> <last-label>
+  local step="$1" title="$2" sub="$3" kind="$4" cta="$5"
+  local idx=() i cur=0 key rows nrows label mark inst count
+  for i in "${!ITEMS[@]}"; do
+    if [[ "$kind" == all || "$(item_field "$i" 1)" == "$kind" ]]; then idx+=("$i"); fi
+  done
+  local nitems=${#idx[@]}
+  nrows=$((nitems + 1)); [[ "$step" -gt 1 ]] && nrows=$((nrows + 1))
   printf '\033[?25l'
-  trap cursor_restore EXIT
   while true; do
-    draw_menu "$cur"
-    IFS= read -rsn1 key < "$TTY" || true
+    header "$step" "$title" "$sub"
+    [[ -n "$PAGE_BODY" ]] && printf '%s\n' "$PAGE_BODY"
+    local r=0
+    for ((r = 0; r < nitems; r++)); do
+      i="${idx[$r]}"
+      label="$(item_field "$i" 3)"
+      if [[ "${SEL[$i]}" == 1 ]]; then mark="${GRN}[x]${R}"; else mark="[ ]"; fi
+      inst=""; is_installed "$(item_field "$i" 1)" "$(item_field "$i" 2)" && inst=" ${D}(already installed)${R}"
+      if [[ "$cur" == "$r" ]]; then printf '  %s>%s %s %s%s\n' "$CYN" "$R" "$mark" "$label" "$inst"
+      else printf '    %s %s%s\n' "$mark" "$label" "$inst"; fi
+    done
+    [[ "$nitems" -gt 0 ]] && printf '\n'
+    if [[ "$cur" == "$nitems" ]]; then printf '  %s>%s %s%s%s\n' "$CYN" "$R" "$B$GRN" "$cta" "$R"
+    else printf '    %s%s%s\n' "$GRN" "$cta" "$R"; fi
+    if [[ "$step" -gt 1 ]]; then
+      if [[ "$cur" == $((nitems + 1)) ]]; then printf '  %s>%s Back\n' "$CYN" "$R"; else printf '    %sBack%s\n' "$D" "$R"; fi
+    fi
+    printf '\n  %sarrows move   enter select   q quit%s\n' "$D" "$R"
+
+    key="$(read_key)"
     case "$key" in
-      $'\033')
-        rest=""; IFS= read -rsn2 -t 1 rest < "$TTY" || true
-        case "$rest" in
-          '[A') [[ "$cur" -gt 0 ]] && cur=$((cur - 1)) ;;
-          '[B') [[ "$cur" -lt "$last" ]] && cur=$((cur + 1)) ;;
-        esac ;;
-      q) cursor_restore; printf '\nCancelled.\n'; exit 0 ;;
-      ''|' ')
-        if [[ "$cur" == "$last" ]]; then break; fi
-        if [[ "${SEL[$cur]}" == 1 ]]; then SEL[$cur]=0; else SEL[$cur]=1; fi ;;
+      UP)   [[ "$cur" -gt 0 ]] && cur=$((cur - 1)) ;;
+      DOWN) [[ "$cur" -lt $((nrows - 1)) ]] && cur=$((cur + 1)) ;;
+      QUIT) printf '\033[?25h'; clear_screen; echo "Cancelled."; exit 0 ;;
+      ENTER)
+        if [[ "$cur" -lt "$nitems" ]]; then
+          i="${idx[$cur]}"
+          if [[ "${SEL[$i]}" == 1 ]]; then SEL[$i]=0; else SEL[$i]=1; fi
+        elif [[ "$cur" == "$nitems" ]]; then printf '\033[?25h'; return 0
+        else printf '\033[?25h'; return 1; fi ;;
     esac
   done
-  cursor_restore
-  printf '\n'
+}
+
+page_welcome() {
+  local cur=0 key
+  printf '\033[?25l'
+  while true; do
+    header 1 "Welcome" "Set up this Mac. Nothing is installed until the last screen."
+    if [[ "$cur" == 0 ]]; then printf '  %s>%s %sGuided%s  %sstep by step: tools, apps, setup%s\n    One list  %severything on a single screen%s\n' "$CYN" "$R" "$B" "$R" "$D" "$R" "$D" "$R"
+    else printf '    Guided  %sstep by step: tools, apps, setup%s\n  %s>%s %sOne list%s  %severything on a single screen%s\n' "$D" "$R" "$CYN" "$R" "$B" "$R" "$D" "$R"; fi
+    printf '\n  %sarrows move   enter select   q quit%s\n' "$D" "$R"
+    key="$(read_key)"
+    case "$key" in
+      UP) cur=0 ;; DOWN) cur=1 ;;
+      QUIT) printf '\033[?25h'; clear_screen; echo "Cancelled."; exit 0 ;;
+      ENTER) printf '\033[?25h'; if [[ "$cur" == 0 ]]; then MODE=guided; else MODE=list; fi; return 0 ;;
+    esac
+  done
+}
+
+page_review() {
+  local i n=0 body="" ret=0
+  for i in "${!ITEMS[@]}"; do
+    [[ "${SEL[$i]}" == 1 ]] || continue
+    n=$((n + 1)); body+="    ${GRN}+${R} $(item_field "$i" 3)"$'\n'
+  done
+  [[ "$n" == 0 ]] && body="    ${D}nothing selected${R}"$'\n'
+  PAGE_BODY="$body"
+  page 5 "Review" "This is what will be set up:" none "Install $n selected" || ret=1
+  PAGE_BODY=""
+  return "$ret"
+}
+
+wizard() {
+  local step=1 ws need=0
+  while true; do
+    case "$step" in
+      1) page_welcome; if [[ "$MODE" == list ]]; then step=20; else step=2; fi ;;
+      20) if page 2 "Everything" "Press enter on a row to tick or untick it." all "Continue"; then
+            step=21
+          else step=1; fi ;;
+      21) if [[ "${SEL[$(index_of workspaces)]}" == 1 ]]; then
+            need=0
+            for ws in "${WORKSPACES[@]}"; do [[ -f "$PROFILES_DIR/$ws/profile.env" ]] || need=1; done
+            if [[ "$need" == 1 ]]; then
+              header 2 "Your details" "Used for git commits in each workspace. Press enter to skip any."
+              collect_identities
+            fi
+          fi
+          step=22 ;;
+      22) if page_review; then break; else step=20; fi ;;
+      2) if page 2 "Command-line tools" "Press enter on a row to tick or untick it." formula "Continue"; then step=3; else step=1; fi ;;
+      3) if page 3 "Apps" "Installed with Homebrew. Android Studio goes last, it is large." cask "Continue"; then step=4; else step=2; fi ;;
+      4) if page 4 "Setup" "Git defaults, your workspaces, and your shell." task "Continue"; then
+           if [[ "${SEL[$(index_of workspaces)]}" == 1 ]]; then
+             for ws in "${WORKSPACES[@]}"; do [[ -f "$PROFILES_DIR/$ws/profile.env" ]] && continue; need=1; done
+             if [[ "$need" == 1 ]]; then
+               header 4 "Your details" "Used for git commits in each workspace. Press enter to skip any."
+               collect_identities
+             fi
+           fi
+           step=5
+         else step=3; fi ;;
+      5) if page_review; then break; else step=4; fi ;;
+    esac
+  done
+  clear_screen
+}
+
+index_of() { # index_of <name> -> index in ITEMS
+  local i
+  for i in "${!ITEMS[@]}"; do
+    [[ "$(item_field "$i" 2)" == "$1" ]] && { echo "$i"; return 0; }
+  done
+  echo 0
 }
 
 # ---------- workspace identity prompts ----------
@@ -204,13 +300,13 @@ collect_identities() {
     [[ -f "$PROFILES_DIR/$ws/profile.env" ]] || need=1
   done
   [[ "$need" == 1 ]] || return 0
-  [[ "$INTERACTIVE" == 1 ]] && printf '%sGit identity per workspace%s %s(enter to skip)%s\n' "$B" "$R" "$D" "$R"
   name="$(ask "Your name:" "${GIT_USER_NAME:-}")"
   for ws in "${WORKSPACES[@]}"; do
     [[ -f "$PROFILES_DIR/$ws/profile.env" ]] && continue
     upper="$(printf '%s' "$ws" | tr '[:lower:]' '[:upper:]')"
     eval "email=\"\${${upper}_EMAIL:-}\""
     email="$(ask "Email for $ws:" "$email")"
+    [[ "$DEMO" == 1 ]] && continue
     mkdir -p "$PROFILES_DIR/$ws"
     printf 'WS_NAME="%s"\nWS_EMAIL="%s"\n' "$name" "$email" > "$PROFILES_DIR/$ws/profile.env"
   done
@@ -444,7 +540,7 @@ main() {
 
   if [[ -r "$TTY" && -t 1 && "$YES" != 1 ]]; then INTERACTIVE=1; fi
   init_selection
-  if [[ "$INTERACTIVE" == 1 ]]; then menu; fi
+  if [[ "$INTERACTIVE" == 1 ]]; then wizard; fi
 
   # Build the plan from the selection. Brew items pull in CLT + Homebrew.
   local i kind name label need_brew=0 need_sudo=0

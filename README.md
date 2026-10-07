@@ -1,6 +1,6 @@
 # mac
 
-Interactive macOS setup for a fresh laptop. Pick what you want from a checklist, then watch each step run with a live spinner.
+Interactive macOS setup for a fresh laptop. A short onboarding wizard lets you pick what you want, then you watch each step run with a live spinner.
 
 ## Run
 
@@ -16,16 +16,25 @@ Flags go after `--`:
 
 | Flag | Effect |
 |---|---|
-| `-y`, `--yes` | Skip the menu, run the defaults |
+| `-y`, `--yes` | Skip the wizard, run the defaults |
+| `--demo` | Fake every step to preview the progress screen; installs nothing |
 | `full` | Also preselect PostgreSQL 16 and Redis |
 | `docker` | Also preselect Docker Desktop |
 | `workspaces` | Only set up workspaces and the shell block |
 
 Optional env vars: `GIT_USER_NAME`, `PERSONAL_EMAIL`, `MOODBOD_EMAIL`, `ASMBLY_EMAIL` prefill the identity prompts.
 
-## The menu
+## The wizard
 
-`↑/↓` (or `j/k`) move, `space` toggles, `a` all, `n` none, `enter` starts, `q` quits. Anything already installed is marked and starts unticked.
+Controls are just the arrow keys and Enter (`q` quits). Enter on a row ticks or unticks it; Enter on **Continue** moves on, **Back** goes back.
+
+1. **Welcome:** choose *Guided* (step by step) or *One list* (everything on one screen).
+2. **Command-line tools**
+3. **Apps**
+4. **Setup:** git defaults, workspaces, shell. If workspaces are ticked it asks for your name and a git email per workspace (skippable).
+5. **Review:** shows exactly what will be set up, then **Install**.
+
+Anything already installed is marked and starts unticked.
 
 Ticked by default:
 
